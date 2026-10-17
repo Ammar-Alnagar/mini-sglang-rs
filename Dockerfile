@@ -1,72 +1,45 @@
-ARG CUDA_VERSION=12.8.1
-ARG UBUNTU_VERSION=24.04
-ARG PYTHON_VERSION=3.12
+# Multi-stage Dockerfile for Mini-SGLang Rust
 
-# Build stage
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS builder
-
-ARG PYTHON_VERSION
+# Builder Stage
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python${PYTHON_VERSION} \
-    python${PYTHON_VERSION}-dev \
-    python${PYTHON_VERSION}-venv \
-    python3-pip \
     curl \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv package manager
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
+# Install Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /app
 
-# Copy all source files (editable install requires source to exist)
-COPY pyproject.toml ./
-COPY python/ ./python/
+COPY Cargo.toml ./
+COPY vendor/ ./vendor/
+COPY src/ ./src/
+COPY tests/ ./tests/
 
-# Create venv and install dependencies
-RUN uv venv --python=python${PYTHON_VERSION} /app/.venv \
-    && . /app/.venv/bin/activate \
-    && uv pip install -e . \
-    && uv pip install torch-c-dlpack-ext
+RUN cargo build --release
 
-# Runtime stage
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS runtime
-
-ARG PYTHON_VERSION
+# Runtime Stage
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python${PYTHON_VERSION} \
-    python${PYTHON_VERSION}-venv \
+    ca-certificates \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
 RUN useradd --create-home --shell /bin/bash --uid 1001 minisgl
 
-# Copy application from builder
-COPY --from=builder --chown=minisgl:minisgl /app /app
-
-# Create cache directories
-RUN mkdir -p /app/.cache/huggingface /app/.cache/tvm-ffi /app/.cache/flashinfer \
-    && chown -R minisgl:minisgl /app/.cache
-
-WORKDIR /app
-
-# Environment configuration
-ENV CUDA_HOME=/usr/local/cuda
-ENV PATH="${CUDA_HOME}/bin:/app/.venv/bin:${PATH}"
-ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
-ENV PYTHONUNBUFFERED=1
-
-# Set up cache directories
-ENV HF_HOME=/app/.cache/huggingface
-ENV TVM_FFI_CACHE_DIR=/app/.cache/tvm-ffi
-ENV FLASHINFER_WORKSPACE_BASE=/app/.cache/flashinfer
+COPY --from=builder /app/target/release/minisgl /usr/local/bin/minisgl
 
 USER minisgl
+WORKDIR /home/minisgl
 
-EXPOSE 1919
+EXPOSE 8000
 
-ENTRYPOINT ["python", "-m", "minisgl"]
+ENTRYPOINT ["minisgl"]
 CMD ["--help"]
