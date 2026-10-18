@@ -15,6 +15,9 @@ __pycache__/
 *.nsys-rep
 *.ncu-rep
 
+# Rust target
+target/
+
 # binaries
 build/
 dist/

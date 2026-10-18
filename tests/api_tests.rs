@@ -1,3 +1,4 @@
+use minisgl::core::sampling::SamplingParams;
 use minisgl::message::protocol::{ChatCompletionChoice, ChatCompletionRequest, ChatCompletionResponse, ChatMessage};
 
 #[test]
@@ -8,10 +9,14 @@ fn test_chat_completion_protocol_serde() {
             role: "user".to_string(),
             content: "Hello".to_string(),
         }],
-        temperature: Some(0.7),
-        top_p: Some(0.9),
-        max_tokens: Some(64),
-        stream: Some(false),
+        sampling_params: SamplingParams {
+            temperature: 0.7,
+            top_p: 0.9,
+            top_k: 50,
+            ignore_eos: false,
+            max_tokens: 64,
+        },
+        stream: false,
     };
 
     let serialized = serde_json::to_string(&req).expect("Serialization failed");

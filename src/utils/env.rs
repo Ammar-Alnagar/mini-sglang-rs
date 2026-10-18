@@ -56,13 +56,13 @@ fn parse_mem_bytes(mem: &str) -> Option<usize> {
     if s.is_empty() { return None; }
     if s.ends_with("GB") || s.ends_with('G') {
         let val = s.trim_end_matches("GB").trim_end_matches('G');
-        Some(((val.parse::<f64>().ok()? * 1024.0 * 1024.0 * 1024.0) as usize))
+        Some((val.parse::<f64>().ok()? * 1024.0 * 1024.0 * 1024.0) as usize )
     } else if s.ends_with("MB") || s.ends_with('M') {
         let val = s.trim_end_matches("MB").trim_end_matches('M');
-        Some(((val.parse::<f64>().ok()? * 1024.0 * 1024.0) as usize))
+        Some((val.parse::<f64>().ok()? * 1024.0 * 1024.0) as usize )
     } else if s.ends_with("KB") || s.ends_with('K') {
         let val = s.trim_end_matches("KB").trim_end_matches('K');
-        Some(((val.parse::<f64>().ok()? * 1024.0) as usize))
+        Some((val.parse::<f64>().ok()? * 1024.0) as usize )
     } else {
         s.parse::<usize>().ok()
     }
