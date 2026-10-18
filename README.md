@@ -4,42 +4,202 @@ A lightweight, high-performance inference engine for Large Language Models writt
 
 ---
 
-Mini-SGLang is a complete, production-grade Rust migration of SGLang. It preserves every core feature of the original while delivering superior efficiency, type safety, and memory management.
+Mini-SGLang is a complete, production-grade Rust migration of SGLang. It preserves core features of the original while delivering superior efficiency, type safety, and memory management through Tokio async runtime, Axum web framework, Candle tensor backend, and cudarc CUDA interactions.
 
-## Key Features
+---
 
-- Pure Rust Engine: Built on Tokio async runtime, Axum web framework, Candle tensor backend, and cudarc for CUDA interactions.
-- Radix Cache: Reuses KV cache for shared prompt prefixes.
-- Chunked Prefill & Overlap Scheduling: Hides CPU scheduling latency.
-- Tensor Parallelism (TP): Scalable inference across multiple GPUs.
-- OpenAI-Compatible API: Server supporting /v1/chat/completions and /health.
-- Interactive Terminal Shell: Interactive CLI chat interface (--shell).
+## High-Level System Architecture
 
-## Quick Start
+```mermaid
+flowchart TD
+    subgraph Client ["Client Interface"]
+        HTTP["HTTP Client (curl / OpenAI SDK)"]
+        CLI["Interactive CLI Shell (--shell)"]
+    end
 
-### Build & Run from Source
+    subgraph Server ["Axum Web / Server Layer"]
+        Health["GET /health"]
+        Chat["POST /v1/chat/completions"]
+        Args["CLI Args Parser (clap)"]
+    end
+
+    subgraph Pipeline ["Inference Processing Pipeline"]
+        Tok["Tokenizer Worker"]
+        Radix["Radix Cache (KV Reuse)"]
+        Sched["Scheduler (Prefill / Decode)"]
+    end
+
+    subgraph Compute ["Compute & Execution Engine"]
+        Eng["Engine Context"]
+        Candle["Candle Tensor Ops"]
+        CUDA["CUDA Kernels (cudarc NVRTC)"]
+        KVPool["KV Cache Pool"]
+    end
+
+    HTTP -->|JSON Request| Chat
+    CLI -->|Interactive Prompt| Args
+    Args -->|Initialize| Server
+    Chat -->|Extract Prompt| Tok
+    Tok -->|Token IDs| Radix
+    Radix -->|Prefix Hit / Miss| Sched
+    Sched -->|Batch Construction| Eng
+    Eng -->|Tensor Ops| Candle
+    Eng -->|Custom Kernels| CUDA
+    Eng <-->|KV Allocation| KVPool
+    Eng -->|Sampled Output Token| Tok
+    Tok -->|Decoded Response| Chat
+    Chat -->|JSON Response| HTTP
+```
+
+---
+
+## End-to-End Request Flow
+
+The diagram below traces the end-to-end request lifecycle from request entry to response delivery.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Axum as Axum API / Shell
+    participant Tokenizer as Tokenizer Worker
+    participant Cache as Radix Cache
+    participant Scheduler as Scheduler
+    participant Engine as Model Engine
+    participant CUDA as Candle / CUDA Backend
+
+    Client->>Axum: POST /v1/chat/completions (JSON Payload)
+    Axum->>Axum: Deserialize to ChatCompletionRequest
+    Axum->>Tokenizer: encode(prompt_text)
+    Tokenizer-->>Axum: Prompt Token IDs (Vec<u32>)
+    Axum->>Cache: match_prefix(tokens)
+    Cache-->>Axum: matched_len & cached page indices
+    Axum->>Scheduler: Register Req(uid, input_ids, cached_len)
+    
+    loop Inference Execution Loop
+        Scheduler->>Scheduler: schedule(active_reqs)
+        Scheduler-->>Engine: Batch (Prefill / Decode)
+        Engine->>CUDA: Forward Pass (Tensors & Attention)
+        CUDA-->>Engine: Logits
+        Engine->>Engine: Sample next token (SamplingParams)
+        Engine->>Scheduler: Update Req (append token, check finish)
+    end
+
+    Scheduler-->>Axum: Completed Req (generated_tokens)
+    Axum->>Tokenizer: decode(generated_tokens)
+    Tokenizer-->>Axum: Decoded Output String
+    Axum->>Axum: Build ChatCompletionResponse
+    Axum-->>Client: 200 OK (JSON Response)
+```
+
+### Detailed Lifecycle Steps
+
+1. **Request Entry & Parsing**:
+   - The client sends an HTTP POST request to `/v1/chat/completions` containing the model name, messages, and sampling parameters (`temperature`, `top_p`, `max_tokens`).
+   - Axum deserializes the body into a `ChatCompletionRequest` struct.
+2. **Tokenization**:
+   - The text contents are passed to `TokenizerWorker::encode()` to convert character prompts into numerical token IDs (`Vec<u32>`).
+3. **Radix Cache Prefix Matching**:
+   - Prompt token IDs are passed to `RadixCache::match_prefix()`.
+   - Reusable KV cache tokens and allocated page indices are identified to eliminate redundant prefill computation for shared system prompts or chat history.
+4. **Request Registration & Scheduling**:
+   - A `Req` instance is constructed with token length metadata, cached length, and sampling configuration.
+   - The request is added to the active queue. `Scheduler::schedule()` selects candidate requests and builds a `Batch` for either `Prefill` or `Decode` execution phases.
+5. **Model Forward Pass & Kernel Execution**:
+   - The engine processes the `Batch` through standard LLM layers (`Linear`, `RMSNorm`, `RotaryEmbedding`).
+   - Candle tensor operations execute GPU/CPU matrix multiplications while custom NVRTC CUDA kernels handle fused attention and KV cache access.
+6. **Sampling & Auto-regressive Generation**:
+   - Output logits are processed according to `SamplingParams` (greedy or temperature-based sampling) to pick the next token ID.
+   - The token is appended to `Req.generated_tokens`. If the stopping condition or `max_tokens` is reached, the request is marked finished; otherwise, it returns to the decode loop.
+7. **Response Formatting**:
+   - Final tokens are decoded into string format via `TokenizerWorker::decode()`.
+   - The result is packaged into an OpenAI-compatible `ChatCompletionResponse` object and returned as JSON.
+
+---
+
+## Setup & Deployment Flow
+
+```mermaid
+flowchart LR
+    subgraph Build ["Build Pipeline"]
+        Source["Rust Source Code"] --> Cargo["cargo build --release"]
+        Cargo --> Binary["minisgl binary"]
+    end
+
+    subgraph Docker ["Container Deployment"]
+        DockerFile["Dockerfile"] --> DockerBuild["docker build -t minisgl-rust ."]
+        DockerBuild --> Image["minisgl-rust image"]
+    end
+
+    subgraph Execution ["Execution Modes"]
+        Binary --> RunServer["Server Mode: --port 8000"]
+        Binary --> RunShell["Shell Mode: --shell"]
+        Binary --> RunTP["Distributed TP Mode: --tp N"]
+        Image --> RunContainer["docker run -p 8000:8000"]
+    end
+```
+
+### Build & Run Instructions
 
 ```bash
-# Build release executable
+# Build release binary
 cargo build --release
 
-# Run OpenAI API Server
+# Run OpenAI API Server (default port 8000)
 cargo run --release -- --model "Qwen/Qwen3-0.6B" --port 8000
 
 # Run in Interactive Shell Mode
 cargo run --release -- --model "Qwen/Qwen3-0.6B" --shell
+
+# Run with Tensor Parallelism across multiple GPUs
+cargo run --release -- --model "Qwen/Qwen3-0.6B" --tp 2
 ```
 
 ### Docker Support
 
 ```bash
-# Build image
+# Build Docker image
 docker build -t minisgl-rust .
 
-# Run container
+# Run Docker container
 docker run -p 8000:8000 minisgl-rust --model Qwen/Qwen3-0.6B
 ```
 
+---
+
+## Usage Workflows
+
+```mermaid
+flowchart TD
+    Start(["Launch Application"]) --> CheckMode{"CLI Flag Check"}
+    
+    CheckMode -->|"--shell"| Interactive["Interactive Shell Mode"]
+    Interactive --> UserInput["Prompt Input from Terminal"]
+    UserInput --> ResetCheck{"Command == '/reset'?"}
+    ResetCheck -->|Yes| ClearHistory["Clear Chat History Context"]
+    ResetCheck -->|No| EngineInference["Run Inference & Stream Tokens"]
+    EngineInference --> UserInput
+    ClearHistory --> UserInput
+
+    CheckMode -->|"Default Server"| APIServer["Axum API Server"]
+    APIServer --> Bind["Bind TCP Listener (host:port)"]
+    Bind --> Listen["Listen for incoming HTTP Requests"]
+    Listen --> RouteHealth["GET /health -> 200 OK"]
+    Listen --> RouteChat["POST /v1/chat/completions -> Execute Inference"]
+```
+
+### Command Line Options
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `--model` | String | `"Qwen/Qwen3-0.6B"` | Model repository ID or path |
+| `--host` | String | `"127.0.0.1"` | Bind host for API server |
+| `--port` | u16 | `8000` | Bind port for API server |
+| `--tp` | usize | `1` | Tensor Parallelism degree (GPU count) |
+| `--shell` | bool | `false` | Enable interactive terminal shell mode |
+
+---
+
 ## Migration Details
 
-See MIGRATION.md for full architectural mappings between Python and Rust components.
+See [MIGRATION.md](MIGRATION.md) for full architectural mappings between Python and Rust components.
