@@ -1,53 +1,53 @@
 # Mini-SGLang (Pure Rust Edition)
 
-A lightweight, high-performance inference engine for Large Language Models written in pure Rust.
+A lightweight inference engine for Large Language Models written in pure Rust.
 
 ---
 
-Mini-SGLang is a complete, production-grade Rust migration of SGLang. It preserves core features of the original while delivering superior efficiency, type safety, and memory management through Tokio async runtime, Axum web framework, Candle tensor backend, `cutile` and `cuda-oxide` from NVIDIA's `cuda-rust` ecosystem, and `cudarc` CUDA interactions.
+Mini-SGLang is a Rust migration of SGLang. It preserves core features of the original engine while delivering memory management, type safety, and execution through the Tokio async runtime, Axum framework, Candle tensor engine, `cutile` and `cuda-oxide` from NVIDIA CUDA Rust tools, and `cudarc` CUDA operations.
 
 ---
 
-## High-Level System Architecture
+## System Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Client ["Client Interface"]
-        HTTP["HTTP Client (curl / OpenAI SDK)"]
+    subgraph Client ["Client Layer"]
+        HTTP["HTTP Client (curl or OpenAI SDK)"]
         CLI["Interactive CLI Shell (--shell)"]
     end
 
-    subgraph Server ["Axum Web / Server Layer"]
+    subgraph Server ["Axum Web Server Layer"]
         Health["GET /health"]
         Chat["POST /v1/chat/completions"]
-        Args["CLI Args Parser (clap)"]
+        Args["CLI Arguments Parser (clap)"]
     end
 
-    subgraph Pipeline ["Inference Processing Pipeline"]
+    subgraph Pipeline ["Inference Pipeline"]
         Tok["Tokenizer Worker"]
-        Radix["Radix Cache (KV Reuse)"]
-        Sched["Scheduler (Prefill / Decode)"]
+        Radix["Radix Cache"]
+        Sched["Scheduler"]
     end
 
-    subgraph Compute ["Compute & Execution Engine"]
-        Eng["Engine Context"]
-        CuTile["NVIDIA cuTile / cuda-oxide (Primary)"]
-        CuDarc["cudarc NVRTC (Secondary Fallback)"]
-        Candle["Candle Tensor Ops (CPU/GPU Fallback)"]
+    subgraph Compute ["LLM Compute Engine"]
+        Eng["LLM Engine"]
+        CuTile["NVIDIA cuTile and cuda-oxide"]
+        CuDarc["cudarc NVRTC Fallback"]
+        Candle["Candle Tensor Fallback"]
         KVPool["KV Cache Pool"]
     end
 
     HTTP -->|JSON Request| Chat
-    CLI -->|Interactive Prompt| Args
+    CLI -->|Prompt Input| Args
     Args -->|Initialize| Server
     Chat -->|Extract Prompt| Tok
-    Tok -->|Token IDs| Radix
-    Radix -->|Prefix Hit / Miss| Sched
+    Tok -->|Token Sequence| Radix
+    Radix -->|Prefix Allocation| Sched
     Sched -->|Batch Construction| Eng
     Eng -->|Tile Kernels| CuTile
     CuTile -.->|Fallback| CuDarc
     CuDarc -.->|Fallback| Candle
-    Eng <-->|KV Allocation| KVPool
+    Eng <-->|KV Memory Management| KVPool
     Eng -->|Sampled Output Token| Tok
     Tok -->|Decoded Response| Chat
     Chat -->|JSON Response| HTTP
@@ -55,126 +55,124 @@ flowchart TD
 
 ---
 
-## Kernel Execution Architecture & Fallback Hierarchy
+## Kernel Execution Hierarchy
 
-Mini-SGLang features a 3-tier kernel execution pipeline designed for performance and adaptability across diverse hardware environments:
+Mini-SGLang uses a three-tier kernel execution pipeline for performance across hardware configurations:
 
-1. **Primary Backend (`cuTile` & `cuda-oxide`)**:
-   - Built on NVIDIA's official `cuda-rust` ecosystem (`cutile` and `cuda-oxide`).
-   - Executes tile-based GPU kernels for index selection, paged KV store, parallel logit sampling, radix cache operations, RMSNorm, RoPE, and fused MoE.
+1. **Primary Backend (`cuTile` and `cuda-oxide`)**:
+   - Built on NVIDIA CUDA Rust tools (`cutile` and `cuda-oxide`).
+   - Executes tile-based GPU kernels for index selection, paged KV storage, logit sampling, radix cache operations, RMSNorm, RoPE, and fused MoE.
 2. **Secondary Fallback Backend (`cudarc` NVRTC)**:
-   - Utilizes `cudarc` NVRTC JIT CUDA C++ compilation for custom CUDA kernel execution when cuTile kernels are unsuited or inactive.
-3. **Tertiary CPU/GPU Fallback (`Candle`)**:
-   - High-compatibility fallback executing tensor operations on Candle (CPU or CUDA).
+   - Uses `cudarc` NVRTC runtime compilation for CUDA C++ source kernels when cuTile kernels are inactive.
+3. **Tertiary Fallback (`Candle`)**:
+   - Executes tensor operations on CPU or GPU via Candle when custom CUDA kernels are disabled.
 
 ---
 
-## End-to-End Request Flow
+## Request Execution Flow
 
-The diagram below traces the end-to-end request lifecycle from request entry to response delivery.
+The sequence diagram below shows the request lifecycle from entry to completion.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Client
-    participant Axum as Axum API / Shell
+    participant Axum as Axum Web Server
     participant Tokenizer as Tokenizer Worker
     participant Cache as Radix Cache
     participant Scheduler as Scheduler
-    participant Engine as Model Engine
-    participant CUDA as cuTile / cuda-oxide / Candle Backend
+    participant Engine as LLM Engine
+    participant CUDA as CUDA Execution Backend
 
-    Client->>Axum: POST /v1/chat/completions (JSON Payload)
-    Axum->>Axum: Deserialize to ChatCompletionRequest
-    Axum->>Tokenizer: encode(prompt_text)
-    Tokenizer-->>Axum: Prompt Token IDs (Vec<u32>)
-    Axum->>Cache: match_prefix(tokens)
-    Cache-->>Axum: matched_len & cached page indices
-    Axum->>Scheduler: Register Req(uid, input_ids, cached_len)
+    Client->>Axum: POST /v1/chat/completions
+    Axum->>Axum: Parse ChatCompletionRequest
+    Axum->>Tokenizer: Encode prompt text
+    Tokenizer-->>Axum: Token IDs
+    Axum->>Cache: Match prompt prefix
+    Cache-->>Axum: Cached page index data
+    Axum->>Scheduler: Register Request
     
-    loop Inference Execution Loop
-        Scheduler->>Scheduler: schedule(active_reqs)
-        Scheduler-->>Engine: Batch (Prefill / Decode)
-        Engine->>CUDA: Forward Pass (Tensors & Attention)
-        CUDA-->>Engine: Logits
-        Engine->>Engine: Sample next token (SamplingParams)
-        Engine->>Scheduler: Update Req (append token, check finish)
+    loop Inference Execution
+        Scheduler->>Scheduler: Build request Batch
+        Scheduler-->>Engine: Process Batch
+        Engine->>CUDA: Run forward pass
+        CUDA-->>Engine: Compute Logits
+        Engine->>Engine: Sample next token
+        Engine->>Scheduler: Update Request status
     end
 
-    Scheduler-->>Axum: Completed Req (generated_tokens)
-    Axum->>Tokenizer: decode(generated_tokens)
-    Tokenizer-->>Axum: Decoded Output String
+    Scheduler-->>Axum: Completed Request tokens
+    Axum->>Tokenizer: Decode token sequence
+    Tokenizer-->>Axum: Decoded string
     Axum->>Axum: Build ChatCompletionResponse
-    Axum-->>Client: 200 OK (JSON Response)
+    Axum-->>Client: Return 200 OK Response
 ```
 
-### Detailed Lifecycle Steps
+### Request Lifecycle Steps
 
-1. **Request Entry & Parsing**:
-   - The client sends an HTTP POST request to `/v1/chat/completions` containing the model name, messages, and sampling parameters (`temperature`, `top_p`, `max_tokens`).
-   - Axum deserializes the body into a `ChatCompletionRequest` struct.
+1. **Request Entry**:
+   - The client sends an HTTP POST request to `/v1/chat/completions`.
+   - Axum converts the JSON payload into a `ChatCompletionRequest` structure.
 2. **Tokenization**:
-   - The text contents are passed to `TokenizerWorker::encode()` to convert character prompts into numerical token IDs (`Vec<u32>`).
+   - The engine sends prompt text to `TokenizerWorker` to generate numerical token IDs.
 3. **Radix Cache Prefix Matching**:
-   - Prompt token IDs are passed to `RadixCache::match_prefix()`.
-   - Reusable KV cache tokens and allocated page indices are identified to eliminate redundant prefill computation for shared system prompts or chat history.
-4. **Request Registration & Scheduling**:
-   - A `Req` instance is constructed with token length metadata, cached length, and sampling configuration.
-   - The request is added to the active queue. `Scheduler::schedule()` selects candidate requests and builds a `Batch` for either `Prefill` or `Decode` execution phases.
-5. **Model Forward Pass & Kernel Execution**:
-   - The engine processes the `Batch` through standard LLM layers (`Linear`, `RMSNorm`, `RotaryEmbedding`).
-   - Tile kernels execute via `cutile` & `cuda-oxide`, falling back to `cudarc` or `Candle`.
-6. **Sampling & Auto-regressive Generation**:
-   - Output logits are processed according to `SamplingParams` (greedy or temperature-based sampling) to pick the next token ID.
-   - The token is appended to `Req.generated_tokens`. If the stopping condition or `max_tokens` is reached, the request is marked finished; otherwise, it returns to the decode loop.
-7. **Response Formatting**:
-   - Final tokens are decoded into string format via `TokenizerWorker::decode()`.
-   - The result is packaged into an OpenAI-compatible `ChatCompletionResponse` object and returned as JSON.
+   - `RadixCache` checks existing prefix entries to reuse stored KV cache blocks.
+4. **Scheduling**:
+   - The engine creates a `Req` structure and queues it. `Scheduler` selects active requests and forms execution batches.
+5. **Model Forward Pass**:
+   - `LLMEngine` processes the batch using standard neural network layers.
+   - GPU operations execute on `cutile`, `cudarc`, or `Candle`.
+6. **Token Sampling**:
+   - The engine samples the next token according to `SamplingParams`.
+   - Generation continues until a stop condition occurs or max token count is reached.
+7. **Response Delivery**:
+   - `TokenizerWorker` converts generated tokens back into text.
+   - Axum formats and returns a `ChatCompletionResponse` JSON object.
 
 ---
 
-## Setup & Deployment Flow
+## Build and Deployment Flow
 
 ```mermaid
 flowchart LR
     subgraph Build ["Build Pipeline"]
-        Source["Rust Source Code"] --> Cargo["cargo build --release"]
+        Source["Rust Source"] --> Cargo["cargo build --release"]
         Cargo --> Binary["minisgl binary"]
     end
 
     subgraph Docker ["Container Deployment"]
-        DockerFile["Dockerfile"] --> DockerBuild["docker build -t minisgl-rust ."]
+        DockerFile["Dockerfile"] --> DockerBuild["docker build"]
         DockerBuild --> Image["minisgl-rust image"]
     end
 
     subgraph Execution ["Execution Modes"]
-        Binary --> RunServer["Server Mode: --port 8000"]
-        Binary --> RunShell["Shell Mode: --shell"]
-        Binary --> RunTP["Distributed TP Mode: --tp N"]
-        Image --> RunContainer["docker run -p 8000:8000"]
+        Binary --> RunServer["Server Mode"]
+        Binary --> RunShell["Shell Mode"]
+        Binary --> RunTP["Tensor Parallel Mode"]
+        Image --> RunContainer["Docker Container"]
     end
 ```
 
-### Build & Run Instructions
+### Build Instructions
 
 ```bash
-# Build release binary (default feature enables cuda, cutile, and cuda-oxide)
+# Build release binary with default GPU features
 cargo build --release
 
-# Run without GPU features on CPU fallback
+# Build without GPU features for CPU fallback
 cargo build --no-default-features
 
-# Run OpenAI API Server (default port 8000)
+# Run OpenAI API Server
 cargo run --release -- --model "Qwen/Qwen3-0.6B" --port 8000
 
 # Run in Interactive Shell Mode
 cargo run --release -- --model "Qwen/Qwen3-0.6B" --shell
 
-# Run with Tensor Parallelism across multiple GPUs
+# Run with Tensor Parallelism
 cargo run --release -- --model "Qwen/Qwen3-0.6B" --tp 2
 ```
 
-### Docker Support
+### Docker Deployment
 
 ```bash
 # Build Docker image
@@ -186,39 +184,39 @@ docker run -p 8000:8000 minisgl-rust --model Qwen/Qwen3-0.6B
 
 ---
 
-## Usage Workflows
+## Application Workflows
 
 ```mermaid
 flowchart TD
-    Start(["Launch Application"]) --> CheckMode{"CLI Flag Check"}
+    Start["Launch Application"] --> CheckMode{"CLI Flag Check"}
     
     CheckMode -->|"--shell"| Interactive["Interactive Shell Mode"]
-    Interactive --> UserInput["Prompt Input from Terminal"]
-    UserInput --> ResetCheck{"Command == '/reset'?"}
-    ResetCheck -->|Yes| ClearHistory["Clear Chat History Context"]
-    ResetCheck -->|No| EngineInference["Run Inference & Stream Tokens"]
+    Interactive --> UserInput["Prompt Input"]
+    UserInput --> ResetCheck{"Input == '/reset'?"}
+    ResetCheck -->|Yes| ClearHistory["Clear Context History"]
+    ResetCheck -->|No| EngineInference["Execute Inference"]
     EngineInference --> UserInput
     ClearHistory --> UserInput
 
     CheckMode -->|"Default Server"| APIServer["Axum API Server"]
-    APIServer --> Bind["Bind TCP Listener (host:port)"]
-    Bind --> Listen["Listen for incoming HTTP Requests"]
-    Listen --> RouteHealth["GET /health -> 200 OK"]
-    Listen --> RouteChat["POST /v1/chat/completions -> Execute Inference"]
+    APIServer --> Bind["Bind TCP Listener"]
+    Bind --> Listen["Listen for HTTP Requests"]
+    Listen --> RouteHealth["GET /health"]
+    Listen --> RouteChat["POST /v1/chat/completions"]
 ```
 
 ### Command Line Options
 
-| Argument | Type | Default | Description |
+| Option | Type | Default | Description |
 |---|---|---|---|
-| `--model` | String | `"Qwen/Qwen3-0.6B"` | Model repository ID or path |
-| `--host` | String | `"127.0.0.1"` | Bind host for API server |
-| `--port` | u16 | `8000` | Bind port for API server |
-| `--tp` | usize | `1` | Tensor Parallelism degree (GPU count) |
-| `--shell` | bool | `false` | Enable interactive terminal shell mode |
+| `--model` | String | `"Qwen/Qwen3-0.6B"` | Model ID or file path |
+| `--host` | String | `"127.0.0.1"` | Network address for API server |
+| `--port` | u16 | `8000` | Port number for API server |
+| `--tp` | usize | `1` | Number of GPUs for Tensor Parallelism |
+| `--shell` | bool | `false` | Enable interactive shell mode |
 
 ---
 
 ## Migration Details
 
-See [MIGRATION.md](MIGRATION.md) for full architectural mappings between Python and Rust components.
+Read [MIGRATION.md](MIGRATION.md) for full mapping between Python and Rust components.
