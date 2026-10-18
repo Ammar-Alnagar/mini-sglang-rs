@@ -75,7 +75,8 @@ async fn run_engine_loop(mut rx: mpsc::Receiver<ServerRequest>) -> anyhow::Resul
     let scheduler = Scheduler::new(32);
     let mut engine = LLMEngine::new(EngineConfig::default())?;
 
-    let mut pending_handlers: Vec<(u64, String, oneshot::Sender<ChatCompletionResponse>)> = Vec::new();
+    let mut pending_handlers: Vec<(u64, String, oneshot::Sender<ChatCompletionResponse>)> =
+        Vec::new();
     let mut active_reqs: Vec<Req> = Vec::new();
 
     loop {
@@ -140,7 +141,10 @@ async fn run_engine_loop(mut rx: mpsc::Receiver<ServerRequest>) -> anyhow::Resul
                         .decode(&req_item.generated_tokens)
                         .unwrap_or_default();
 
-                    if let Some(pos) = pending_handlers.iter().position(|(id, _, _)| *id == req_item.uid) {
+                    if let Some(pos) = pending_handlers
+                        .iter()
+                        .position(|(id, _, _)| *id == req_item.uid)
+                    {
                         let (_, model_name, tx) = pending_handlers.remove(pos);
                         let resp = ChatCompletionResponse {
                             id: format!("chatcmpl-{}", req_item.uid),
