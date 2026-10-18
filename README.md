@@ -4,7 +4,7 @@ A lightweight, high-performance inference engine for Large Language Models writt
 
 ---
 
-Mini-SGLang is a complete, production-grade Rust migration of SGLang. It preserves core features of the original while delivering superior efficiency, type safety, and memory management through Tokio async runtime, Axum web framework, Candle tensor backend, and cudarc CUDA interactions.
+Mini-SGLang is a complete, production-grade Rust migration of SGLang. It preserves core features of the original while delivering superior efficiency, type safety, and memory management through Tokio async runtime, Axum web framework, Candle tensor backend, `cutile` and `cuda-oxide` from NVIDIA's `cuda-rust` ecosystem, and `cudarc` CUDA interactions.
 
 ---
 
@@ -31,8 +31,9 @@ flowchart TD
 
     subgraph Compute ["Compute & Execution Engine"]
         Eng["Engine Context"]
-        Candle["Candle Tensor Ops"]
-        CUDA["CUDA Kernels (cudarc NVRTC)"]
+        CuTile["NVIDIA cuTile / cuda-oxide (Primary)"]
+        CuDarc["cudarc NVRTC (Secondary Fallback)"]
+        Candle["Candle Tensor Ops (CPU/GPU Fallback)"]
         KVPool["KV Cache Pool"]
     end
 
@@ -43,13 +44,28 @@ flowchart TD
     Tok -->|Token IDs| Radix
     Radix -->|Prefix Hit / Miss| Sched
     Sched -->|Batch Construction| Eng
-    Eng -->|Tensor Ops| Candle
-    Eng -->|Custom Kernels| CUDA
+    Eng -->|Tile Kernels| CuTile
+    CuTile -.->|Fallback| CuDarc
+    CuDarc -.->|Fallback| Candle
     Eng <-->|KV Allocation| KVPool
     Eng -->|Sampled Output Token| Tok
     Tok -->|Decoded Response| Chat
     Chat -->|JSON Response| HTTP
 ```
+
+---
+
+## Kernel Execution Architecture & Fallback Hierarchy
+
+Mini-SGLang features a 3-tier kernel execution pipeline designed for performance and adaptability across diverse hardware environments:
+
+1. **Primary Backend (`cuTile` & `cuda-oxide`)**:
+   - Built on NVIDIA's official `cuda-rust` ecosystem (`cutile` and `cuda-oxide`).
+   - Executes tile-based GPU kernels for index selection, paged KV store, parallel logit sampling, radix cache operations, RMSNorm, RoPE, and fused MoE.
+2. **Secondary Fallback Backend (`cudarc` NVRTC)**:
+   - Utilizes `cudarc` NVRTC JIT CUDA C++ compilation for custom CUDA kernel execution when cuTile kernels are unsuited or inactive.
+3. **Tertiary CPU/GPU Fallback (`Candle`)**:
+   - High-compatibility fallback executing tensor operations on Candle (CPU or CUDA).
 
 ---
 
@@ -66,7 +82,7 @@ sequenceDiagram
     participant Cache as Radix Cache
     participant Scheduler as Scheduler
     participant Engine as Model Engine
-    participant CUDA as Candle / CUDA Backend
+    participant CUDA as cuTile / cuda-oxide / Candle Backend
 
     Client->>Axum: POST /v1/chat/completions (JSON Payload)
     Axum->>Axum: Deserialize to ChatCompletionRequest
@@ -107,7 +123,7 @@ sequenceDiagram
    - The request is added to the active queue. `Scheduler::schedule()` selects candidate requests and builds a `Batch` for either `Prefill` or `Decode` execution phases.
 5. **Model Forward Pass & Kernel Execution**:
    - The engine processes the `Batch` through standard LLM layers (`Linear`, `RMSNorm`, `RotaryEmbedding`).
-   - Candle tensor operations execute GPU/CPU matrix multiplications while custom NVRTC CUDA kernels handle fused attention and KV cache access.
+   - Tile kernels execute via `cutile` & `cuda-oxide`, falling back to `cudarc` or `Candle`.
 6. **Sampling & Auto-regressive Generation**:
    - Output logits are processed according to `SamplingParams` (greedy or temperature-based sampling) to pick the next token ID.
    - The token is appended to `Req.generated_tokens`. If the stopping condition or `max_tokens` is reached, the request is marked finished; otherwise, it returns to the decode loop.
@@ -142,8 +158,11 @@ flowchart LR
 ### Build & Run Instructions
 
 ```bash
-# Build release binary
+# Build release binary (default feature enables cuda, cutile, and cuda-oxide)
 cargo build --release
+
+# Run without GPU features on CPU fallback
+cargo build --no-default-features
 
 # Run OpenAI API Server (default port 8000)
 cargo run --release -- --model "Qwen/Qwen3-0.6B" --port 8000

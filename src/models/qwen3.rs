@@ -1,5 +1,5 @@
-use candle_core::{Result, Tensor};
 use crate::models::config::ModelConfig;
+use candle_core::{Result, Tensor};
 
 pub struct Qwen3Model {
     pub config: ModelConfig,

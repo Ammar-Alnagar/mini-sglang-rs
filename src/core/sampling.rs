@@ -14,10 +14,18 @@ pub struct SamplingParams {
     pub max_tokens: usize,
 }
 
-fn default_temperature() -> f32 { 0.0 }
-fn default_top_k() -> i32 { -1 }
-fn default_top_p() -> f32 { 1.0 }
-fn default_max_tokens() -> usize { 1024 }
+fn default_temperature() -> f32 {
+    0.0
+}
+fn default_top_k() -> i32 {
+    -1
+}
+fn default_top_p() -> f32 {
+    1.0
+}
+fn default_max_tokens() -> usize {
+    1024
+}
 
 impl Default for SamplingParams {
     fn default() -> Self {
