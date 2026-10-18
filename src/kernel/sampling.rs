@@ -106,8 +106,8 @@ pub fn sample_top_p_top_k(
     let mut results = Vec::with_capacity(batch_size);
     let mut rng = rand::rng();
 
-    for b in 0..batch_size {
-        let mut row: Vec<(usize, f32)> = logits_vec[b]
+    for row_logits in logits_vec.iter().take(batch_size) {
+        let mut row: Vec<(usize, f32)> = row_logits
             .iter()
             .enumerate()
             .map(|(i, &v)| (i, v / temperature))

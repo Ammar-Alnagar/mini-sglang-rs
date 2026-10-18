@@ -1,7 +1,7 @@
 use candle_core::{Device, Tensor};
 use minisgl::kernel::{
-    greedy_sample, index_select, index_select_fallback, radix_index, radix_store,
-    sample_logits, sample_top_p_top_k, store_kv_cache, store_kv_fallback,
+    greedy_sample, index_select, index_select_fallback, radix_index, radix_store, sample_logits,
+    sample_top_p_top_k, store_kv_cache, store_kv_fallback,
 };
 use minisgl::layers::norm::RMSNorm;
 use minisgl::layers::rotary::RotaryEmbedding;

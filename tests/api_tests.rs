@@ -1,5 +1,7 @@
 use minisgl::core::sampling::SamplingParams;
-use minisgl::message::protocol::{ChatCompletionChoice, ChatCompletionRequest, ChatCompletionResponse, ChatMessage};
+use minisgl::message::protocol::{
+    ChatCompletionChoice, ChatCompletionRequest, ChatCompletionResponse, ChatMessage,
+};
 
 #[test]
 fn test_chat_completion_protocol_serde() {
@@ -20,7 +22,8 @@ fn test_chat_completion_protocol_serde() {
     };
 
     let serialized = serde_json::to_string(&req).expect("Serialization failed");
-    let deserialized: ChatCompletionRequest = serde_json::from_str(&serialized).expect("Deserialization failed");
+    let deserialized: ChatCompletionRequest =
+        serde_json::from_str(&serialized).expect("Deserialization failed");
 
     assert_eq!(deserialized.model, "Qwen/Qwen3-0.6B");
     assert_eq!(deserialized.messages.len(), 1);

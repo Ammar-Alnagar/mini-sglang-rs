@@ -12,7 +12,9 @@ pub struct CuTileNormTile {
 #[cfg(all(feature = "cutile", feature = "cuda-oxide"))]
 impl Default for CuTileNormTile {
     fn default() -> Self {
-        Self { hidden_tile_size: 1024 }
+        Self {
+            hidden_tile_size: 1024,
+        }
     }
 }
 

@@ -1,6 +1,11 @@
-use axum::{routing::{get, post}, Json, Router};
+use crate::message::protocol::{
+    ChatCompletionChoice, ChatCompletionRequest, ChatCompletionResponse, ChatMessage,
+};
+use axum::{
+    routing::{get, post},
+    Json, Router,
+};
 use std::net::SocketAddr;
-use crate::message::protocol::{ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice, ChatMessage};
 
 pub async fn start_server(host: &str, port: u16) -> anyhow::Result<()> {
     let app = Router::new()
@@ -14,9 +19,7 @@ pub async fn start_server(host: &str, port: u16) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn chat_completions(
-    Json(req): Json<ChatCompletionRequest>,
-) -> Json<ChatCompletionResponse> {
+async fn chat_completions(Json(req): Json<ChatCompletionRequest>) -> Json<ChatCompletionResponse> {
     let response = ChatCompletionResponse {
         id: "chatcmpl-minisgl-rust".to_string(),
         object: "chat.completion".to_string(),

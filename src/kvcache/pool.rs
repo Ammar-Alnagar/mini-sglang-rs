@@ -1,4 +1,4 @@
-use candle_core::{Device, DType, Result, Tensor};
+use candle_core::{DType, Device, Result, Tensor};
 
 pub struct KVCachePool {
     pub k_cache: Tensor,

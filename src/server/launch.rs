@@ -1,6 +1,6 @@
-use anyhow::Result;
-use crate::server::args::Args;
 use crate::server::api_server;
+use crate::server::args::Args;
+use anyhow::Result;
 
 pub async fn run(args: Args) -> Result<()> {
     if args.shell {

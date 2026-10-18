@@ -19,13 +19,19 @@ impl EnvConfig {
             shell_temperature: parse_env("MINISGL_SHELL_TEMPERATURE", 0.6),
             flashinfer_use_tensor_cores: parse_env_opt_bool("MINISGL_FLASHINFER_USE_TENSOR_CORES"),
             disable_overlap_scheduling: parse_env_bool("MINISGL_DISABLE_OVERLAP_SCHEDULING", false),
-            pynccl_max_buffer_size: parse_env_mem("MINISGL_PYNCCL_MAX_BUFFER_SIZE", 1024 * 1024 * 1024),
+            pynccl_max_buffer_size: parse_env_mem(
+                "MINISGL_PYNCCL_MAX_BUFFER_SIZE",
+                1024 * 1024 * 1024,
+            ),
         }
     }
 }
 
 fn parse_env<T: std::str::FromStr>(key: &str, default: T) -> T {
-    env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn parse_env_bool(key: &str, default: bool) -> bool {
@@ -39,10 +45,9 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 }
 
 fn parse_env_opt_bool(key: &str) -> Option<bool> {
-    env::var(key).ok().map(|v| match v.to_lowercase().as_str() {
-        "1" | "true" | "yes" => true,
-        _ => false,
-    })
+    env::var(key)
+        .ok()
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
 }
 
 fn parse_env_mem(key: &str, default: usize) -> usize {
@@ -53,16 +58,18 @@ fn parse_env_mem(key: &str, default: usize) -> usize {
 
 fn parse_mem_bytes(mem: &str) -> Option<usize> {
     let s = mem.trim().to_uppercase();
-    if s.is_empty() { return None; }
+    if s.is_empty() {
+        return None;
+    }
     if s.ends_with("GB") || s.ends_with('G') {
         let val = s.trim_end_matches("GB").trim_end_matches('G');
-        Some((val.parse::<f64>().ok()? * 1024.0 * 1024.0 * 1024.0) as usize )
+        Some((val.parse::<f64>().ok()? * 1024.0 * 1024.0 * 1024.0) as usize)
     } else if s.ends_with("MB") || s.ends_with('M') {
         let val = s.trim_end_matches("MB").trim_end_matches('M');
-        Some((val.parse::<f64>().ok()? * 1024.0 * 1024.0) as usize )
+        Some((val.parse::<f64>().ok()? * 1024.0 * 1024.0) as usize)
     } else if s.ends_with("KB") || s.ends_with('K') {
         let val = s.trim_end_matches("KB").trim_end_matches('K');
-        Some((val.parse::<f64>().ok()? * 1024.0) as usize )
+        Some((val.parse::<f64>().ok()? * 1024.0) as usize)
     } else {
         s.parse::<usize>().ok()
     }

@@ -6,7 +6,9 @@ pub struct TokenizerWorker {
 
 impl TokenizerWorker {
     pub fn new(model_path: impl Into<String>) -> Self {
-        Self { model_path: model_path.into() }
+        Self {
+            model_path: model_path.into(),
+        }
     }
 
     pub fn encode(&self, text: &str) -> Result<Vec<u32>> {

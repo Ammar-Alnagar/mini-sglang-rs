@@ -12,7 +12,9 @@ pub struct CuTileMoETile {
 #[cfg(all(feature = "cutile", feature = "cuda-oxide"))]
 impl Default for CuTileMoETile {
     fn default() -> Self {
-        Self { expert_tile_size: 4 }
+        Self {
+            expert_tile_size: 4,
+        }
     }
 }
 
@@ -33,7 +35,8 @@ impl FusedMoE {
     pub fn forward_cutile(&self, x: &Tensor) -> Result<Tensor> {
         tracing::debug!("Executing FusedMoE via cuTile / cuda-oxide backend");
         let tile = CuTileMoETile::default();
-        let _expert_batches = (self.num_experts + tile.expert_tile_size - 1) / tile.expert_tile_size;
+        let _expert_batches =
+            (self.num_experts + tile.expert_tile_size - 1) / tile.expert_tile_size;
 
         self.forward_fallback(x)
     }

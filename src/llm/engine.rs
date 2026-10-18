@@ -1,6 +1,6 @@
-use anyhow::Result;
 use crate::core::req::Req;
 use crate::engine::config::EngineConfig;
+use anyhow::Result;
 
 pub struct LLMEngine {
     pub config: EngineConfig,
