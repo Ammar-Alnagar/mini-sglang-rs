@@ -1,18 +1,23 @@
 # Features of Mini-SGLang
 
-## Online Serving
+## Online Serving and Dynamic Request Batching
 
-Mini-SGLang supports online serving with an OpenAI-compatible API server built on the Axum web framework. It provides the standard `/v1/chat/completions` endpoint and `/health` route.
+Mini-SGLang supports online serving with an OpenAI-compatible API server built on the Axum web framework. The server uses an asynchronous `mpsc` buffer channel and background worker loop to collect incoming HTTP requests into dynamic batches before model execution.
 
 ```mermaid
 sequenceDiagram
     participant Client
     participant Server as Axum Server
+    participant Channel as mpsc Buffer Channel
+    participant Worker as Background Engine Worker
     participant Pipeline as Tokenizer / Scheduler / Engine
 
     Client->>Server: POST /v1/chat/completions
-    Server->>Pipeline: Process request
-    Pipeline-->>Server: Complete token generation
+    Server->>Channel: Enqueue request with oneshot handle
+    Channel->>Worker: Collect batch of requests
+    Worker->>Pipeline: Process request batch
+    Pipeline-->>Worker: Complete token generation
+    Worker->>Server: Send response via oneshot handle
     Server-->>Client: 200 OK Response (JSON)
 ```
 

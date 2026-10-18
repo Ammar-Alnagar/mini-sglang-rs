@@ -20,10 +20,12 @@ flowchart TD
     subgraph Server ["Axum Web Server Layer"]
         Health["GET /health"]
         Chat["POST /v1/chat/completions"]
+        Chan["Tokio mpsc Channel Buffer"]
         Args["CLI Arguments Parser (clap)"]
     end
 
     subgraph Pipeline ["Inference Pipeline"]
+        Worker["Background Engine Loop"]
         Tok["Tokenizer Worker"]
         Radix["Radix Cache"]
         Sched["Scheduler"]
@@ -40,7 +42,9 @@ flowchart TD
     HTTP -->|JSON Request| Chat
     CLI -->|Prompt Input| Args
     Args -->|Initialize| Server
-    Chat -->|Extract Prompt| Tok
+    Chat -->|Send to Channel| Chan
+    Chan -->|Batch Intake| Worker
+    Worker -->|Extract Prompt| Tok
     Tok -->|Token Sequence| Radix
     Radix -->|Prefix Allocation| Sched
     Sched -->|Batch Construction| Eng
@@ -49,7 +53,8 @@ flowchart TD
     CuDarc -.->|Fallback| Candle
     Eng <-->|KV Memory Management| KVPool
     Eng -->|Sampled Output Token| Tok
-    Tok -->|Decoded Response| Chat
+    Tok -->|Decoded Response| Worker
+    Worker -->|oneshot Response| Chat
     Chat -->|JSON Response| HTTP
 ```
 
@@ -78,6 +83,8 @@ sequenceDiagram
     autonumber
     actor Client
     participant Axum as Axum Web Server
+    participant Channel as mpsc Buffer Channel
+    participant Worker as Background Engine Worker
     participant Tokenizer as Tokenizer Worker
     participant Cache as Radix Cache
     participant Scheduler as Scheduler
@@ -86,11 +93,13 @@ sequenceDiagram
 
     Client->>Axum: POST /v1/chat/completions
     Axum->>Axum: Parse ChatCompletionRequest
-    Axum->>Tokenizer: Encode prompt text
-    Tokenizer-->>Axum: Token IDs
-    Axum->>Cache: Match prompt prefix
-    Cache-->>Axum: Cached page index data
-    Axum->>Scheduler: Register Request
+    Axum->>Channel: Enqueue ServerRequest with oneshot handle
+    Channel->>Worker: Collect request batch
+    Worker->>Tokenizer: Encode prompt text
+    Tokenizer-->>Worker: Token IDs
+    Worker->>Cache: Match prompt prefix
+    Cache-->>Worker: Cached page index data
+    Worker->>Scheduler: Register Request
     
     loop Inference Execution
         Scheduler->>Scheduler: Build request Batch
@@ -101,10 +110,10 @@ sequenceDiagram
         Engine->>Scheduler: Update Request status
     end
 
-    Scheduler-->>Axum: Completed Request tokens
-    Axum->>Tokenizer: Decode token sequence
-    Tokenizer-->>Axum: Decoded string
-    Axum->>Axum: Build ChatCompletionResponse
+    Scheduler-->>Worker: Completed Request tokens
+    Worker->>Tokenizer: Decode token sequence
+    Tokenizer-->>Worker: Decoded string
+    Worker->>Axum: Return via oneshot handle
     Axum-->>Client: Return 200 OK Response
 ```
 
@@ -113,21 +122,25 @@ sequenceDiagram
 1. **Request Entry**:
    - The client sends an HTTP POST request to `/v1/chat/completions`.
    - Axum converts the JSON payload into a `ChatCompletionRequest` structure.
-2. **Tokenization**:
+2. **Async Channel Enqueue**:
+   - Axum enqueues the request into an asynchronous `mpsc` channel and awaits response notification via a `oneshot` channel handle.
+3. **Dynamic Batching**:
+   - The background engine loop collects pending requests from the channel buffer into dynamic execution batches.
+4. **Tokenization**:
    - The engine sends prompt text to `TokenizerWorker` to generate numerical token IDs.
-3. **Radix Cache Prefix Matching**:
+5. **Radix Cache Prefix Matching**:
    - `RadixCache` checks existing prefix entries to reuse stored KV cache blocks.
-4. **Scheduling**:
+6. **Scheduling**:
    - The engine creates a `Req` structure and queues it. `Scheduler` selects active requests and forms execution batches.
-5. **Model Forward Pass**:
+7. **Model Forward Pass**:
    - `LLMEngine` processes the batch using standard neural network layers.
    - GPU operations execute on `cutile`, `cudarc`, or `Candle`.
-6. **Token Sampling**:
+8. **Token Sampling**:
    - The engine samples the next token according to `SamplingParams`.
    - Generation continues until a stop condition occurs or max token count is reached.
-7. **Response Delivery**:
+9. **Response Delivery**:
    - `TokenizerWorker` converts generated tokens back into text.
-   - Axum formats and returns a `ChatCompletionResponse` JSON object.
+   - The background worker transmits the completed response through the `oneshot` handle to Axum, which delivers a `ChatCompletionResponse` JSON object to the client.
 
 ---
 
