@@ -36,7 +36,7 @@ pub async fn start_server(host: &str, port: u16, model_name_or_path: &str, cfg: 
 
     // Spawn background engine worker loop for batching and execution
     tokio::spawn(async move {
-        if let Err(e) = run_engine_loop(rx, &model_str, cfg).await {
+        if let Err(e) = run_engine_loop(rx, model_str, cfg).await {
             tracing::error!("Engine loop error: {:?}", e);
         }
     });
@@ -72,16 +72,16 @@ async fn chat_completions(
 
 async fn run_engine_loop(
     mut rx: mpsc::Receiver<ServerRequest>,
-    model_name_or_path: &str,
+    model_name_or_path: String,
     cfg: EngineConfig,
 ) -> anyhow::Result<()> {
-    let tokenizer = TokenizerWorker::new(model_name_or_path);
+    let tokenizer = TokenizerWorker::new(&model_name_or_path);
     let cache = RadixCache::new();
     let scheduler = Scheduler::new(32);
     let mut engine = LLMEngine::new(cfg)?;
 
     tracing::info!("Loading model {} into engine...", model_name_or_path);
-    if let Err(e) = engine.load_model(model_name_or_path) {
+    if let Err(e) = engine.load_model(&model_name_or_path) {
         tracing::warn!(
             "Failed to load weights for {}: {}. Running in fallback mode.",
             model_name_or_path,

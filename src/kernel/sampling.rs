@@ -4,7 +4,7 @@
 //! with primary execution via `cutile` / `cuda-oxide`, falling back to `cudarc` NVRTC,
 //! and CPU/GPU Candle tensor logic.
 
-use candle_core::{Result, Tensor};
+use candle_core::{DType, Result, Tensor};
 use rand::Rng;
 
 /// CUDA C++ source code for `cudarc` NVRTC JIT compiled argmax kernel.
@@ -81,14 +81,32 @@ pub fn cudarc_sample_logits(
     sample_top_p_top_k(logits, temperature, top_p, top_k)
 }
 
-/// Greedy argmax sampling fallback using Candle operations.
+/// Greedy argmax sampling — stays entirely on-device when possible.
 pub fn greedy_sample(logits: &Tensor) -> Result<Vec<u32>> {
     let argmax = logits.argmax(candle_core::D::Minus1)?;
     let vec = argmax.to_vec1::<u32>()?;
     Ok(vec)
 }
 
+/// Ensure the tensor is F32 on CPU for host-side nucleus sampling.
+/// This is a single copy instead of doing per-element conversions.
+fn logits_to_cpu_f32(logits: &Tensor) -> Result<Tensor> {
+    let t = if logits.dtype() != DType::F32 {
+        logits.to_dtype(DType::F32)?
+    } else {
+        logits.clone()
+    };
+    if t.device().is_cuda() {
+        t.to_device(&candle_core::Device::Cpu)
+    } else {
+        Ok(t)
+    }
+}
+
 /// Top-P and Top-K nucleus sampling fallback.
+///
+/// For greedy (temperature ≤ 0 or top_k == 1), we stay on-device via `argmax`.
+/// For stochastic sampling we pull logits to CPU F32 once and sample there.
 pub fn sample_top_p_top_k(
     logits: &Tensor,
     temperature: f32,
@@ -99,10 +117,13 @@ pub fn sample_top_p_top_k(
         return greedy_sample(logits);
     }
 
-    let shape = logits.shape();
+    // Pull to CPU F32 in one shot (handles BF16/F16 on CUDA)
+    let logits_cpu = logits_to_cpu_f32(logits)?;
+
+    let shape = logits_cpu.shape();
     let batch_size = shape.dim(0)?;
     let vocab_size = shape.dim(1)?;
-    let logits_vec = logits.to_vec2::<f32>()?;
+    let logits_vec = logits_cpu.to_vec2::<f32>()?;
     let mut results = Vec::with_capacity(batch_size);
     let mut rng = rand::rng();
 
