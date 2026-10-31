@@ -33,7 +33,7 @@ safetensors = "0.5"
 # Tensor Runtime & CUDA
 candle-core = { version = "0.9", default-features = false }
 candle-nn = { version = "0.9", default-features = false }
-cudarc = { version = "0.12", optional = true, features = ["nvrtc", "cublas", "nccl"] }
+cudarc = { version = "0.19", optional = true, default-features = false, features = ["nvrtc", "cublas", "nccl", "cuda-version-from-build-system"] }
 cutile = { version = "0.4", optional = true }
 cuda-oxide = { version = "0.4", optional = true }
 
@@ -42,9 +42,6 @@ default = []
 cuda = ["candle-core/cuda", "candle-nn/cuda", "dep:cudarc"]
 cutile = ["dep:cutile"]
 cuda-oxide = ["dep:cuda-oxide"]
-
-[patch.crates-io]
-zip = { path = "vendor/zip" }
 
 [[bin]]
 name = "minisgl"

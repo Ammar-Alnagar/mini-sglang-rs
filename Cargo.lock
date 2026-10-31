@@ -617,15 +617,6 @@ dependencies = [
 
 [[package]]
 name = "cudarc"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38cd60a9a42ec83a2ed7effb0b1f073270264ea99da7acfc44f7e8d74dee0384"
-dependencies = [
- "libloading 0.8.9",
-]
-
-[[package]]
-name = "cudarc"
 version = "0.17.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bf99ab37ee7072d64d906aa2dada9a3422f1d975cdf8c8055a573bc84897ed8"
@@ -1984,7 +1975,7 @@ dependencies = [
  "candle-nn",
  "clap",
  "cuda-oxide",
- "cudarc 0.12.1",
+ "cudarc 0.19.10",
  "cutile",
  "half",
  "hf-hub",
@@ -4157,7 +4148,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "zip"
-version = "1.1.1"
