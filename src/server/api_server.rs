@@ -29,14 +29,14 @@ pub struct AppState {
     tx: mpsc::Sender<ServerRequest>,
 }
 
-pub async fn start_server(host: &str, port: u16, model_name_or_path: &str) -> anyhow::Result<()> {
+pub async fn start_server(host: &str, port: u16, model_name_or_path: &str, cfg: EngineConfig) -> anyhow::Result<()> {
     let (tx, rx) = mpsc::channel::<ServerRequest>(1024);
     let state = AppState { tx };
     let model_str = model_name_or_path.to_string();
 
     // Spawn background engine worker loop for batching and execution
     tokio::spawn(async move {
-        if let Err(e) = run_engine_loop(rx, &model_str).await {
+        if let Err(e) = run_engine_loop(rx, model_str, cfg).await {
             tracing::error!("Engine loop error: {:?}", e);
         }
     });
@@ -73,11 +73,12 @@ async fn chat_completions(
 async fn run_engine_loop(
     mut rx: mpsc::Receiver<ServerRequest>,
     model_name_or_path: &str,
+    cfg: EngineConfig,
 ) -> anyhow::Result<()> {
     let tokenizer = TokenizerWorker::new(model_name_or_path);
     let cache = RadixCache::new();
     let scheduler = Scheduler::new(32);
-    let mut engine = LLMEngine::new(EngineConfig::default())?;
+    let mut engine = LLMEngine::new(cfg)?;
 
     tracing::info!("Loading model {} into engine...", model_name_or_path);
     if let Err(e) = engine.load_model(model_name_or_path) {

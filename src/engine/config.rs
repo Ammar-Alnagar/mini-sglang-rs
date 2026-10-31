@@ -15,6 +15,10 @@ pub struct EngineConfig {
     pub use_dummy_weight: bool,
     pub max_seq_len_override: Option<usize>,
     pub num_page_override: Option<usize>,
+    /// Force a specific CUDA device index; `None` means auto-detect.
+    pub cuda_device_index: Option<usize>,
+    /// Override compute dtype; `None` means auto (bf16 on CUDA, f32 on CPU).
+    pub dtype_override: Option<candle_core::DType>,
 }
 
 impl Default for EngineConfig {
@@ -33,6 +37,8 @@ impl Default for EngineConfig {
             use_dummy_weight: false,
             max_seq_len_override: None,
             num_page_override: None,
+            cuda_device_index: None,
+            dtype_override: None,
         }
     }
 }

@@ -3,10 +3,40 @@ use crate::core::sampling::SamplingParams;
 use crate::engine::config::EngineConfig;
 use crate::llm::engine::LLMEngine;
 use crate::server::api_server;
-use crate::server::args::Args;
+use crate::server::args::{Args, DeviceArg, DTypeArg};
 use crate::tokenizer::worker::TokenizerWorker;
 use anyhow::Result;
+use candle_core::DType;
 use std::io::{self, BufRead, Write};
+
+/// Build an `EngineConfig` from CLI args.
+fn engine_config_from_args(args: &Args) -> EngineConfig {
+    let mut cfg = EngineConfig::default();
+
+    // Resolve CUDA device index
+    match &args.device {
+        DeviceArg::Cuda => {
+            cfg.cuda_device_index = Some(args.device_index);
+        }
+        DeviceArg::Auto => {
+            // auto: try CUDA:device_index, fall back to CPU inside the engine
+            cfg.cuda_device_index = Some(args.device_index);
+        }
+        DeviceArg::Cpu => {
+            cfg.cuda_device_index = None;
+        }
+    }
+
+    // Resolve explicit dtype override
+    cfg.dtype_override = match &args.dtype {
+        DTypeArg::Auto => None,
+        DTypeArg::BF16 => Some(DType::BF16),
+        DTypeArg::F16 => Some(DType::F16),
+        DTypeArg::F32 => Some(DType::F32),
+    };
+
+    cfg
+}
 
 pub async fn run(args: Args) -> Result<()> {
     if args.shell {
@@ -16,7 +46,8 @@ pub async fn run(args: Args) -> Result<()> {
 
         println!("Loading model weights and tokenizer...");
         let tokenizer = TokenizerWorker::new(&args.model);
-        let mut engine = LLMEngine::new(EngineConfig::default())?;
+        let cfg = engine_config_from_args(&args);
+        let mut engine = LLMEngine::new(cfg)?;
         if let Err(e) = engine.load_model(&args.model) {
             eprintln!(
                 "Warning: Failed to load model weights ({}). Running in fallback mode.",
@@ -96,5 +127,6 @@ pub async fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    api_server::start_server(&args.host, args.port, &args.model).await
+    let cfg = engine_config_from_args(&args);
+    api_server::start_server(&args.host, args.port, &args.model, cfg).await
 }
