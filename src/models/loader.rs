@@ -189,7 +189,7 @@ fn fp8_e4m3_to_f32_table() -> [f32; 256] {
 
 /// Parse raw bytes of a safetensors BF16 tensor into a `Vec<f32>`.
 fn parse_bf16_as_f32(data: &[u8]) -> Vec<f32> {
-    data.chunks_exact(2)
+    data.as_chunks::<2>().0.iter()
         .map(|chunk| {
             let u16_val = u16::from_le_bytes([chunk[0], chunk[1]]);
             f32::from_bits((u16_val as u32) << 16)
@@ -211,7 +211,7 @@ fn convert_raw_tensor(
         safetensors::Dtype::BF16 => match target_dtype {
             DType::BF16 => {
                 let vec: Vec<half::bf16> = data
-                    .chunks_exact(2)
+                    .as_chunks::<2>().0.iter()
                     .map(|chunk| half::bf16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])))
                     .collect();
                 Tensor::from_vec(vec, shape, device)
@@ -234,7 +234,7 @@ fn convert_raw_tensor(
         },
         safetensors::Dtype::F32 => {
             let f32_vec: Vec<f32> = data
-                .chunks_exact(4)
+                .as_chunks::<4>().0.iter()
                 .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect();
             match target_dtype {
@@ -254,7 +254,7 @@ fn convert_raw_tensor(
         }
         safetensors::Dtype::F16 => {
             let f16_vec: Vec<half::f16> = data
-                .chunks_exact(2)
+                .as_chunks::<2>().0.iter()
                 .map(|chunk| half::f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])))
                 .collect();
             match target_dtype {
@@ -278,7 +278,7 @@ fn convert_raw_tensor(
         }
         safetensors::Dtype::I64 => {
             let vec: Vec<i64> = data
-                .chunks_exact(8)
+                .as_chunks::<8>().0.iter()
                 .map(|chunk| {
                     i64::from_le_bytes([
                         chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6],
@@ -290,7 +290,7 @@ fn convert_raw_tensor(
         }
         safetensors::Dtype::U32 => {
             let vec: Vec<u32> = data
-                .chunks_exact(4)
+                .as_chunks::<4>().0.iter()
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect();
             Tensor::from_vec(vec, shape, device)
@@ -342,7 +342,7 @@ fn dequantize_fp8_block(
         safetensors::Dtype::BF16 => parse_bf16_as_f32(scale_view.data()),
         safetensors::Dtype::F32 => scale_view
             .data()
-            .chunks_exact(4)
+            .as_chunks::<4>().0.iter()
             .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect(),
         _ => {
@@ -430,7 +430,7 @@ fn load_model_fp8(
 
     let all_data: Vec<Vec<u8>> = paths
         .iter()
-        .map(|p| std::fs::read(p))
+        .map(std::fs::read)
         .collect::<std::io::Result<Vec<_>>>()
         .context("Failed to read safetensors files")?;
 
