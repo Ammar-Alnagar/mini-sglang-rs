@@ -11,7 +11,7 @@ struct RotaryEmbeddingCache {
 }
 
 impl RotaryEmbeddingCache {
-    fn new(dim: usize, max_seq_len: usize, rope_theta: f64, device: &Device) -> Result<Self> {
+    fn new(dim: usize, max_seq_len: usize, rope_theta: f64, dtype: DType, device: &Device) -> Result<Self> {
         let inv_freq: Vec<f32> = (0..dim)
             .step_by(2)
             .map(|i| 1.0 / (rope_theta as f32).powf(i as f32 / dim as f32))
@@ -24,8 +24,8 @@ impl RotaryEmbeddingCache {
 
         let freqs = t.matmul(&inv_freq)?;
         let emb = Tensor::cat(&[&freqs, &freqs], 1)?;
-        let cos = emb.cos()?;
-        let sin = emb.sin()?;
+        let cos = emb.cos()?.to_dtype(dtype)?;
+        let sin = emb.sin()?.to_dtype(dtype)?;
         Ok(Self { cos, sin })
     }
 
@@ -35,6 +35,16 @@ impl RotaryEmbeddingCache {
         let sin = self.sin.narrow(0, pos, seq_len)?;
         let cos = cos.unsqueeze(0)?.unsqueeze(0)?;
         let sin = sin.unsqueeze(0)?.unsqueeze(0)?;
+        let cos = if cos.dtype() != x.dtype() {
+            cos.to_dtype(x.dtype())?
+        } else {
+            cos
+        };
+        let sin = if sin.dtype() != x.dtype() {
+            sin.to_dtype(x.dtype())?
+        } else {
+            sin
+        };
         let rotated = rotate_half(x)?;
         x.broadcast_mul(&cos)?
             .broadcast_add(&rotated.broadcast_mul(&sin)?)
@@ -87,6 +97,7 @@ impl Qwen2Attention {
             head_dim,
             cfg.max_position_embeddings,
             cfg.rope_theta,
+            vb.dtype(),
             vb.device(),
         )?;
 

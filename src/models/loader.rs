@@ -6,6 +6,7 @@ use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use hf_hub::api::sync::Api;
 use hf_hub::Repo;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub enum LoadedModel {
@@ -43,7 +44,6 @@ pub struct ModelPaths {
 }
 
 pub fn resolve_model_files(model_id_or_path: &str) -> Result<ModelPaths> {
-    // If model_id_or_path ends with -FP8, check if local or hub repo exists, or fallback to base
     let candidate_ids = if model_id_or_path.ends_with("-FP8") {
         vec![
             model_id_or_path.to_string(),
@@ -164,77 +164,258 @@ fn detect_fp8_weights(paths: &[PathBuf]) -> bool {
     false
 }
 
-/// Dequantize a single F8E4M3 weight tensor using its per-block scale_inv tensor.
-///
-/// FP8 block-quantized format:
-///   weight_dequant = weight_fp8.to(target_dtype) * scale_inv_tiled
-///
-/// `scale_inv` has shape `[rows/block_size, cols/block_size]` where `block_size` is
-/// determined by dividing the weight shape by the scale shape.
-fn dequantize_fp8_weight(
-    weight_fp8: &Tensor,
-    scale_inv: &Tensor,
-    target_dtype: DType,
-) -> candle_core::Result<Tensor> {
-    let weight_bf16 = weight_fp8.to_dtype(target_dtype)?;
-    let w_shape = weight_bf16.dims();
-    let s_shape = scale_inv.dims();
-
-    if w_shape.len() != 2 || s_shape.len() != 2 {
-        // Fallback: just return casted weight without scaling
-        tracing::warn!(
-            "FP8 dequant: unexpected shapes w={:?} s={:?}, returning raw cast",
-            w_shape,
-            s_shape
-        );
-        return Ok(weight_bf16);
+/// Precomputed lookup table mapping any `u8` byte representation of an IEEE FP8 E4M3FN float
+/// directly to its standard 32-bit float value.
+fn fp8_e4m3_to_f32_table() -> [f32; 256] {
+    let mut table = [0.0f32; 256];
+    for b in 0..256 {
+        let sign = if (b & 0x80) != 0 { -1.0f32 } else { 1.0f32 };
+        let exp = (b >> 3) & 0x0F;
+        let mant = b & 0x07;
+        let val = if exp == 0 {
+            // subnormal
+            sign * 2.0f32.powi(-6) * (mant as f32 / 8.0)
+        } else if exp == 15 && mant == 7 {
+            // NaN
+            0.0f32
+        } else {
+            // normal
+            sign * 2.0f32.powi(exp as i32 - 7) * (1.0 + mant as f32 / 8.0)
+        };
+        table[b] = val;
     }
-
-    let (w_rows, w_cols) = (w_shape[0], w_shape[1]);
-    let (s_rows, s_cols) = (s_shape[0], s_shape[1]);
-
-    let block_r = w_rows / s_rows;
-    let block_c = w_cols / s_cols;
-
-    // Reshape weight to [s_rows, block_r, s_cols, block_c]
-    // then broadcast-multiply with scale_inv [s_rows, 1, s_cols, 1]
-    // then reshape back to [w_rows, w_cols]
-    let weight_reshaped = weight_bf16.reshape((s_rows, block_r, s_cols, block_c))?;
-    let scale_expanded = scale_inv
-        .to_dtype(target_dtype)?
-        .reshape((s_rows, 1, s_cols, 1))?;
-    let dequantized = weight_reshaped.broadcast_mul(&scale_expanded)?;
-    dequantized.reshape((w_rows, w_cols))
+    table
 }
 
-/// Convert a safetensors TensorView to a candle Tensor on the given device.
-fn safetensor_view_to_tensor(
+/// Parse raw bytes of a safetensors BF16 tensor into a `Vec<f32>`.
+fn parse_bf16_as_f32(data: &[u8]) -> Vec<f32> {
+    data.chunks_exact(2)
+        .map(|chunk| {
+            let u16_val = u16::from_le_bytes([chunk[0], chunk[1]]);
+            f32::from_bits((u16_val as u32) << 16)
+        })
+        .collect()
+}
+
+/// Convert a non-FP8 safetensors `TensorView` directly into a Candle `Tensor` on `device`
+/// with `target_dtype`.
+fn convert_raw_tensor(
     view: &safetensors::tensor::TensorView,
+    target_dtype: DType,
     device: &Device,
 ) -> candle_core::Result<Tensor> {
-    let shape: Vec<usize> = view.shape().to_vec();
-    let dtype = match view.dtype() {
-        safetensors::Dtype::F32 => DType::F32,
-        safetensors::Dtype::F16 => DType::F16,
-        safetensors::Dtype::BF16 => DType::BF16,
-        safetensors::Dtype::F8_E4M3 => DType::F8E4M3,
-        safetensors::Dtype::I64 => DType::I64,
-        safetensors::Dtype::U32 => DType::U32,
-        safetensors::Dtype::U8 => DType::U8,
+    let shape = view.shape();
+    let data = view.data();
+
+    match view.dtype() {
+        safetensors::Dtype::BF16 => match target_dtype {
+            DType::BF16 => {
+                let vec: Vec<half::bf16> = data
+                    .chunks_exact(2)
+                    .map(|chunk| half::bf16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])))
+                    .collect();
+                Tensor::from_vec(vec, shape, device)
+            }
+            DType::F32 => {
+                let vec = parse_bf16_as_f32(data);
+                Tensor::from_vec(vec, shape, device)
+            }
+            DType::F16 => {
+                let vec: Vec<half::f16> = parse_bf16_as_f32(data)
+                    .into_iter()
+                    .map(half::f16::from_f32)
+                    .collect();
+                Tensor::from_vec(vec, shape, device)
+            }
+            _ => {
+                let vec = parse_bf16_as_f32(data);
+                Tensor::from_vec(vec, shape, device)?.to_dtype(target_dtype)
+            }
+        },
+        safetensors::Dtype::F32 => {
+            let f32_vec: Vec<f32> = data
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect();
+            match target_dtype {
+                DType::F32 => Tensor::from_vec(f32_vec, shape, device),
+                DType::BF16 => {
+                    let vec: Vec<half::bf16> =
+                        f32_vec.into_iter().map(half::bf16::from_f32).collect();
+                    Tensor::from_vec(vec, shape, device)
+                }
+                DType::F16 => {
+                    let vec: Vec<half::f16> =
+                        f32_vec.into_iter().map(half::f16::from_f32).collect();
+                    Tensor::from_vec(vec, shape, device)
+                }
+                _ => Tensor::from_vec(f32_vec, shape, device)?.to_dtype(target_dtype),
+            }
+        }
+        safetensors::Dtype::F16 => {
+            let f16_vec: Vec<half::f16> = data
+                .chunks_exact(2)
+                .map(|chunk| half::f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])))
+                .collect();
+            match target_dtype {
+                DType::F16 => Tensor::from_vec(f16_vec, shape, device),
+                DType::F32 => {
+                    let vec: Vec<f32> = f16_vec.into_iter().map(|h| h.to_f32()).collect();
+                    Tensor::from_vec(vec, shape, device)
+                }
+                DType::BF16 => {
+                    let vec: Vec<half::bf16> = f16_vec
+                        .into_iter()
+                        .map(|h| half::bf16::from_f32(h.to_f32()))
+                        .collect();
+                    Tensor::from_vec(vec, shape, device)
+                }
+                _ => {
+                    let vec: Vec<f32> = f16_vec.into_iter().map(|h| h.to_f32()).collect();
+                    Tensor::from_vec(vec, shape, device)?.to_dtype(target_dtype)
+                }
+            }
+        }
+        safetensors::Dtype::I64 => {
+            let vec: Vec<i64> = data
+                .chunks_exact(8)
+                .map(|chunk| {
+                    i64::from_le_bytes([
+                        chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6],
+                        chunk[7],
+                    ])
+                })
+                .collect();
+            Tensor::from_vec(vec, shape, device)
+        }
+        safetensors::Dtype::U32 => {
+            let vec: Vec<u32> = data
+                .chunks_exact(4)
+                .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect();
+            Tensor::from_vec(vec, shape, device)
+        }
+        safetensors::Dtype::U8 => {
+            let vec: Vec<u8> = data.to_vec();
+            Tensor::from_vec(vec, shape, device)
+        }
+        _ => Err(candle_core::Error::Msg(format!(
+            "Unsupported safetensors dtype: {:?}",
+            view.dtype()
+        ))),
+    }
+}
+
+/// Dequantize FP8 weight tensor using per-block `scale_inv` tensor directly into GPU/CPU memory.
+fn dequantize_fp8_block(
+    weight_view: &safetensors::tensor::TensorView,
+    scale_view: &safetensors::tensor::TensorView,
+    target_dtype: DType,
+    device: &Device,
+    fp8_table: &[f32; 256],
+) -> candle_core::Result<Tensor> {
+    let w_shape = weight_view.shape();
+    let s_shape = scale_view.shape();
+
+    let (rows, cols) = if w_shape.len() == 2 {
+        (w_shape[0], w_shape[1])
+    } else {
+        return Err(candle_core::Error::Msg(format!(
+            "Expected 2D shape for FP8 weight, got {:?}",
+            w_shape
+        )));
+    };
+
+    let (s_rows, s_cols) = if s_shape.len() == 2 {
+        (s_shape[0], s_shape[1])
+    } else {
+        return Err(candle_core::Error::Msg(format!(
+            "Expected 2D shape for scale_inv, got {:?}",
+            s_shape
+        )));
+    };
+
+    let block_r = rows / s_rows;
+    let block_c = cols / s_cols;
+
+    let scale_f32 = match scale_view.dtype() {
+        safetensors::Dtype::BF16 => parse_bf16_as_f32(scale_view.data()),
+        safetensors::Dtype::F32 => scale_view
+            .data()
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect(),
         _ => {
             return Err(candle_core::Error::Msg(format!(
-                "Unsupported safetensors dtype: {:?}",
-                view.dtype()
+                "Unsupported scale_inv dtype: {:?}",
+                scale_view.dtype()
             )));
         }
     };
 
-    let data = view.data();
-    Tensor::from_raw_buffer(data, dtype, &shape, device)
+    let weight_bytes = weight_view.data();
+    let total_elems = rows * cols;
+
+    match target_dtype {
+        DType::BF16 => {
+            let mut out = Vec::with_capacity(total_elems);
+            for r in 0..rows {
+                let sr = r / block_r;
+                let scale_row_offset = sr * s_cols;
+                let weight_row_offset = r * cols;
+                for c in 0..cols {
+                    let sc = c / block_c;
+                    let scale = scale_f32[scale_row_offset + sc];
+                    let raw_b = weight_bytes[weight_row_offset + c];
+                    let dequant = fp8_table[raw_b as usize] * scale;
+                    out.push(half::bf16::from_f32(dequant));
+                }
+            }
+            Tensor::from_vec(out, (rows, cols), device)
+        }
+        DType::F16 => {
+            let mut out = Vec::with_capacity(total_elems);
+            for r in 0..rows {
+                let sr = r / block_r;
+                let scale_row_offset = sr * s_cols;
+                let weight_row_offset = r * cols;
+                for c in 0..cols {
+                    let sc = c / block_c;
+                    let scale = scale_f32[scale_row_offset + sc];
+                    let raw_b = weight_bytes[weight_row_offset + c];
+                    let dequant = fp8_table[raw_b as usize] * scale;
+                    out.push(half::f16::from_f32(dequant));
+                }
+            }
+            Tensor::from_vec(out, (rows, cols), device)
+        }
+        _ => {
+            // F32 and other dtypes
+            let mut out = Vec::with_capacity(total_elems);
+            for r in 0..rows {
+                let sr = r / block_r;
+                let scale_row_offset = sr * s_cols;
+                let weight_row_offset = r * cols;
+                for c in 0..cols {
+                    let sc = c / block_c;
+                    let scale = scale_f32[scale_row_offset + sc];
+                    let raw_b = weight_bytes[weight_row_offset + c];
+                    let dequant = fp8_table[raw_b as usize] * scale;
+                    out.push(dequant);
+                }
+            }
+            let t = Tensor::from_vec(out, (rows, cols), device)?;
+            if target_dtype != DType::F32 {
+                t.to_dtype(target_dtype)
+            } else {
+                Ok(t)
+            }
+        }
+    }
 }
 
-/// Load FP8-quantized model: loads weights natively, dequantizes F8E4M3 tensors
-/// using their `weight_scale_inv` counterparts, then constructs the model.
+/// Load FP8-quantized model: parses safetensors, dequantizes F8E4M3 tensors
+/// using their `weight_scale_inv` counterparts, loads directly onto `device` with `target_dtype`.
 fn load_model_fp8(
     config: ModelConfig,
     paths: &[PathBuf],
@@ -242,11 +423,11 @@ fn load_model_fp8(
     target_dtype: DType,
 ) -> Result<LoadedModel> {
     tracing::info!(
-        "Loading FP8 quantized model with dequantization to {:?}",
-        target_dtype
+        "Loading FP8 quantized model with block-dequantization to {:?} on {:?}",
+        target_dtype,
+        device
     );
 
-    // Read all safetensors files into memory
     let all_data: Vec<Vec<u8>> = paths
         .iter()
         .map(|p| std::fs::read(p))
@@ -259,7 +440,6 @@ fn load_model_fp8(
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| anyhow::anyhow!("Failed to parse safetensors: {}", e))?;
 
-    // Collect all tensor names
     let mut all_names: Vec<String> = Vec::new();
     for st in &all_safetensors {
         for (name, _) in st.tensors() {
@@ -287,12 +467,13 @@ fn load_model_fp8(
     }
 
     tracing::info!(
-        "Found {} FP8-quantized weight pairs to dequantize",
-        fp8_weight_names.len()
+        "Found {} FP8-quantized weight pairs to dequantize directly to {:?}",
+        fp8_weight_names.len(),
+        device
     );
 
-    // Build dequantized tensor map
-    let mut tensor_map = std::collections::HashMap::<String, Tensor>::new();
+    let fp8_table = fp8_e4m3_to_f32_table();
+    let mut tensor_map = HashMap::<String, Tensor>::new();
 
     for name in &all_names {
         if scale_inv_names.contains(name) {
@@ -303,26 +484,15 @@ fn load_model_fp8(
         let view = find_tensor_in_safetensors(&all_safetensors, name)?;
 
         if fp8_weight_names.contains(name) {
-            // FP8 weight: load raw + scale_inv and dequantize
             let base = name.strip_suffix(".weight").unwrap();
             let scale_name = format!("{}.weight_scale_inv", base);
             let scale_view = find_tensor_in_safetensors(&all_safetensors, &scale_name)?;
 
-            let weight_raw = safetensor_view_to_tensor(&view, device)?;
-            let scale_inv = safetensor_view_to_tensor(&scale_view, device)?;
-
-            let dequantized = dequantize_fp8_weight(&weight_raw, &scale_inv, target_dtype)?;
-            tracing::debug!(
-                "Dequantized FP8 tensor {} ({:?} -> {:?})",
-                name,
-                view.dtype(),
-                target_dtype
-            );
-            tensor_map.insert(name.clone(), dequantized);
+            let tensor =
+                dequantize_fp8_block(&view, &scale_view, target_dtype, device, &fp8_table)?;
+            tensor_map.insert(name.clone(), tensor);
         } else {
-            // Normal tensor: load and cast to target dtype
-            let tensor = safetensor_view_to_tensor(&view, device)?
-                .to_dtype(target_dtype)?;
+            let tensor = convert_raw_tensor(&view, target_dtype, device)?;
             tensor_map.insert(name.clone(), tensor);
         }
     }
