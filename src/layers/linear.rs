@@ -14,7 +14,9 @@ impl Linear {
         let w = match *x.dims() {
             [.., in_features] => {
                 let w_dims = self.weight.dims();
-                if w_dims.len() == 2 && w_dims[0] == in_features {
+                if w_dims.len() == 2 && w_dims[1] == in_features {
+                    self.weight.t()?
+                } else if w_dims.len() == 2 && w_dims[0] == in_features {
                     self.weight.clone()
                 } else {
                     self.weight.t()?
