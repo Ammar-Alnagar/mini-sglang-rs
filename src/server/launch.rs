@@ -18,7 +18,10 @@ pub async fn run(args: Args) -> Result<()> {
         let tokenizer = TokenizerWorker::new(&args.model);
         let mut engine = LLMEngine::new(EngineConfig::default())?;
         if let Err(e) = engine.load_model(&args.model) {
-            eprintln!("Warning: Failed to load model weights ({}). Running in fallback mode.", e);
+            eprintln!(
+                "Warning: Failed to load model weights ({}). Running in fallback mode.",
+                e
+            );
         } else {
             println!("Model loaded successfully.\n");
         }

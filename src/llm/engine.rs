@@ -56,8 +56,8 @@ impl LLMEngine {
 
                 let sampled = sample_logits(
                     &last_logits,
-                    req.sampling_params.temperature as f32,
-                    req.sampling_params.top_p as f32,
+                    req.sampling_params.temperature,
+                    req.sampling_params.top_p,
                     req.sampling_params.top_k,
                 )?;
                 sampled.first().copied().unwrap_or(0)

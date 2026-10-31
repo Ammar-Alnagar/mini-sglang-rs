@@ -67,7 +67,7 @@ pub fn resolve_model_files(model_id_or_path: &str) -> Result<ModelPaths> {
                 if let Ok(entries) = std::fs::read_dir(path) {
                     for entry in entries.flatten() {
                         let p = entry.path();
-                        if p.extension().map_or(false, |ext| ext == "safetensors") {
+                        if p.extension().is_some_and(|ext| ext == "safetensors") {
                             shards.push(p);
                         }
                     }
@@ -92,13 +92,18 @@ pub fn resolve_model_files(model_id_or_path: &str) -> Result<ModelPaths> {
         let config_path = match repo.get("config.json") {
             Ok(p) => p,
             Err(e) => {
-                last_err = Some(anyhow::anyhow!("Failed to fetch config.json for {}: {}", id, e));
+                last_err = Some(anyhow::anyhow!(
+                    "Failed to fetch config.json for {}: {}",
+                    id,
+                    e
+                ));
                 continue;
             }
         };
 
         let tokenizer_path = repo.get("tokenizer.json").unwrap_or_else(|_| {
-            repo.get("vocab.json").unwrap_or_else(|_| config_path.clone())
+            repo.get("vocab.json")
+                .unwrap_or_else(|_| config_path.clone())
         });
 
         let mut weight_paths = Vec::new();
@@ -108,7 +113,10 @@ pub fn resolve_model_files(model_id_or_path: &str) -> Result<ModelPaths> {
             let content = std::fs::read_to_string(&index_path)?;
             let index: serde_json::Value = serde_json::from_str(&content)?;
             if let Some(map) = index.get("weight_map").and_then(|v| v.as_object()) {
-                let mut shard_names: Vec<String> = map.values().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                let mut shard_names: Vec<String> = map
+                    .values()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
                 shard_names.sort();
                 shard_names.dedup();
                 for shard in shard_names {
@@ -133,28 +141,23 @@ pub fn resolve_model_files(model_id_or_path: &str) -> Result<ModelPaths> {
     }))
 }
 
-pub fn load_model(
-    model_id_or_path: &str,
-    device: &Device,
-    dtype: DType,
-) -> Result<LoadedModel> {
+pub fn load_model(model_id_or_path: &str, device: &Device, dtype: DType) -> Result<LoadedModel> {
     let paths = resolve_model_files(model_id_or_path)?;
     tracing::info!("Loading model config from {:?}", paths.config_path);
     let config_str = std::fs::read_to_string(&paths.config_path)?;
     let config: ModelConfig = serde_json::from_str(&config_str)?;
 
     tracing::info!("Loading safetensors weights from {:?}", paths.weight_paths);
-    let vb = unsafe {
-        VarBuilder::from_mmaped_safetensors(&paths.weight_paths, dtype, device)?
-    };
+    let vb = unsafe { VarBuilder::from_mmaped_safetensors(&paths.weight_paths, dtype, device)? };
 
     let is_qwen3 = config
         .model_type
         .as_deref()
-        .map_or(false, |t| t.to_lowercase().contains("qwen3"))
-        || config.architectures.as_ref().map_or(false, |archs| {
-            archs.iter().any(|a| a.to_lowercase().contains("qwen3"))
-        });
+        .is_some_and(|t| t.to_lowercase().contains("qwen3"))
+        || config
+            .architectures
+            .as_ref()
+            .is_some_and(|archs| archs.iter().any(|a| a.to_lowercase().contains("qwen3")));
 
     if is_qwen3 {
         tracing::info!("Detected Qwen3 architecture");

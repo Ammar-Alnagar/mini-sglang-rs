@@ -16,8 +16,6 @@ impl Linear {
                 let w_dims = self.weight.dims();
                 if w_dims.len() == 2 && w_dims[0] == in_features {
                     self.weight.clone()
-                } else if w_dims.len() == 2 && w_dims[1] == in_features {
-                    self.weight.t()?
                 } else {
                     self.weight.t()?
                 }

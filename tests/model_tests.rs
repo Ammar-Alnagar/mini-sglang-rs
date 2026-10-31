@@ -56,38 +56,76 @@ fn test_qwen2_model_forward() {
         );
         tensors.insert(
             format!("{}self_attn.q_proj.weight", p),
-            Tensor::zeros((cfg.num_attention_heads * 16, cfg.hidden_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.num_attention_heads * 16, cfg.hidden_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}self_attn.k_proj.weight", p),
-            Tensor::zeros((cfg.num_key_value_heads * 16, cfg.hidden_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.num_key_value_heads * 16, cfg.hidden_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}self_attn.v_proj.weight", p),
-            Tensor::zeros((cfg.num_key_value_heads * 16, cfg.hidden_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.num_key_value_heads * 16, cfg.hidden_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}self_attn.o_proj.weight", p),
-            Tensor::zeros((cfg.hidden_size, cfg.num_attention_heads * 16), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.hidden_size, cfg.num_attention_heads * 16),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}mlp.gate_proj.weight", p),
-            Tensor::zeros((cfg.intermediate_size, cfg.hidden_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.intermediate_size, cfg.hidden_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}mlp.up_proj.weight", p),
-            Tensor::zeros((cfg.intermediate_size, cfg.hidden_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.intermediate_size, cfg.hidden_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}mlp.down_proj.weight", p),
-            Tensor::zeros((cfg.hidden_size, cfg.intermediate_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.hidden_size, cfg.intermediate_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
     }
 
     let vb = VarBuilder::from_tensors(tensors, DType::F32, &device);
     let mut model = Qwen2Model::load(cfg, vb).unwrap();
 
-    let input_ids = Tensor::new(&[1u32, 10u32, 20u32], &device).unwrap().unsqueeze(0).unwrap();
+    let input_ids = Tensor::new(&[1u32, 10u32, 20u32], &device)
+        .unwrap()
+        .unsqueeze(0)
+        .unwrap();
     let logits = model.forward(&input_ids).unwrap();
     assert_eq!(logits.dims(), &[1, 3, 1000]);
 }
@@ -140,19 +178,39 @@ fn test_qwen3_model_forward() {
         );
         tensors.insert(
             format!("{}self_attn.q_proj.weight", p),
-            Tensor::zeros((cfg.num_attention_heads * 16, cfg.hidden_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.num_attention_heads * 16, cfg.hidden_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}self_attn.k_proj.weight", p),
-            Tensor::zeros((cfg.num_key_value_heads * 16, cfg.hidden_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.num_key_value_heads * 16, cfg.hidden_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}self_attn.v_proj.weight", p),
-            Tensor::zeros((cfg.num_key_value_heads * 16, cfg.hidden_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.num_key_value_heads * 16, cfg.hidden_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}self_attn.o_proj.weight", p),
-            Tensor::zeros((cfg.hidden_size, cfg.num_attention_heads * 16), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.hidden_size, cfg.num_attention_heads * 16),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}self_attn.q_norm.weight", p),
@@ -164,22 +222,40 @@ fn test_qwen3_model_forward() {
         );
         tensors.insert(
             format!("{}mlp.gate_proj.weight", p),
-            Tensor::zeros((cfg.intermediate_size, cfg.hidden_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.intermediate_size, cfg.hidden_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}mlp.up_proj.weight", p),
-            Tensor::zeros((cfg.intermediate_size, cfg.hidden_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.intermediate_size, cfg.hidden_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
         tensors.insert(
             format!("{}mlp.down_proj.weight", p),
-            Tensor::zeros((cfg.hidden_size, cfg.intermediate_size), DType::F32, &device).unwrap(),
+            Tensor::zeros(
+                (cfg.hidden_size, cfg.intermediate_size),
+                DType::F32,
+                &device,
+            )
+            .unwrap(),
         );
     }
 
     let vb = VarBuilder::from_tensors(tensors, DType::F32, &device);
     let mut model = Qwen3Model::load(cfg, vb).unwrap();
 
-    let input_ids = Tensor::new(&[1u32, 10u32, 20u32], &device).unwrap().unsqueeze(0).unwrap();
+    let input_ids = Tensor::new(&[1u32, 10u32, 20u32], &device)
+        .unwrap()
+        .unsqueeze(0)
+        .unwrap();
     let logits = model.forward(&input_ids).unwrap();
     assert_eq!(logits.dims(), &[1, 3, 1000]);
 }

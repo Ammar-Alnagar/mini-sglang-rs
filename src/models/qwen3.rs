@@ -250,8 +250,7 @@ impl Qwen3DecoderLayer {
 
         let post_attention_layernorm_w =
             vb.get(cfg.hidden_size, "post_attention_layernorm.weight")?;
-        let post_attention_layernorm =
-            RMSNorm::new(post_attention_layernorm_w, cfg.rms_norm_eps);
+        let post_attention_layernorm = RMSNorm::new(post_attention_layernorm_w, cfg.rms_norm_eps);
 
         let self_attn = Qwen3Attention::new(cfg, vb.pp("self_attn"))?;
         let mlp = Qwen3MLP::new(cfg, vb.pp("mlp"))?;
@@ -315,8 +314,10 @@ impl Qwen3Model {
 
     pub fn load(config: ModelConfig, vb: VarBuilder) -> Result<Self> {
         let vb_model = vb.pp("model");
-        let embed_weight =
-            vb_model.get((config.vocab_size, config.hidden_size), "embed_tokens.weight")?;
+        let embed_weight = vb_model.get(
+            (config.vocab_size, config.hidden_size),
+            "embed_tokens.weight",
+        )?;
         let embed_tokens = candle_nn::Embedding::new(embed_weight.clone(), config.hidden_size);
 
         let mut layers = Vec::with_capacity(config.num_hidden_layers);
