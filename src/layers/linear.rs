@@ -11,8 +11,20 @@ impl Linear {
     }
 
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let w = self.weight.t()?;
-        let out = x.matmul(&w)?;
+        let w = match *x.dims() {
+            [.., in_features] => {
+                let w_dims = self.weight.dims();
+                if w_dims.len() == 2 && w_dims[0] == in_features {
+                    self.weight.clone()
+                } else if w_dims.len() == 2 && w_dims[1] == in_features {
+                    self.weight.t()?
+                } else {
+                    self.weight.t()?
+                }
+            }
+            _ => self.weight.t()?,
+        };
+        let out = x.broadcast_matmul(&w)?;
         match &self.bias {
             Some(b) => out.broadcast_add(b),
             None => Ok(out),

@@ -29,13 +29,14 @@ pub struct AppState {
     tx: mpsc::Sender<ServerRequest>,
 }
 
-pub async fn start_server(host: &str, port: u16) -> anyhow::Result<()> {
+pub async fn start_server(host: &str, port: u16, model_name_or_path: &str) -> anyhow::Result<()> {
     let (tx, rx) = mpsc::channel::<ServerRequest>(1024);
     let state = AppState { tx };
+    let model_str = model_name_or_path.to_string();
 
     // Spawn background engine worker loop for batching and execution
     tokio::spawn(async move {
-        if let Err(e) = run_engine_loop(rx).await {
+        if let Err(e) = run_engine_loop(rx, &model_str).await {
             tracing::error!("Engine loop error: {:?}", e);
         }
     });
@@ -69,11 +70,23 @@ async fn chat_completions(
     }
 }
 
-async fn run_engine_loop(mut rx: mpsc::Receiver<ServerRequest>) -> anyhow::Result<()> {
-    let tokenizer = TokenizerWorker::new("Qwen/Qwen3-0.6B");
+async fn run_engine_loop(
+    mut rx: mpsc::Receiver<ServerRequest>,
+    model_name_or_path: &str,
+) -> anyhow::Result<()> {
+    let tokenizer = TokenizerWorker::new(model_name_or_path);
     let cache = RadixCache::new();
     let scheduler = Scheduler::new(32);
     let mut engine = LLMEngine::new(EngineConfig::default())?;
+
+    tracing::info!("Loading model {} into engine...", model_name_or_path);
+    if let Err(e) = engine.load_model(model_name_or_path) {
+        tracing::warn!(
+            "Failed to load weights for {}: {}. Running in fallback mode.",
+            model_name_or_path,
+            e
+        );
+    }
 
     let mut pending_handlers: Vec<(u64, String, oneshot::Sender<ChatCompletionResponse>)> =
         Vec::new();
@@ -101,13 +114,22 @@ async fn run_engine_loop(mut rx: mpsc::Receiver<ServerRequest>) -> anyhow::Resul
         // Process incoming requests into active_reqs
         for item in new_incoming {
             let uid = REQ_ID_GEN.fetch_add(1, Ordering::SeqCst);
-            let prompt = item
-                .req
-                .messages
-                .last()
-                .map(|m| m.content.as_str())
-                .unwrap_or("");
-            let token_ids = tokenizer.encode(prompt).unwrap_or_default();
+            let prompt = if item.req.messages.len() == 1 && item.req.messages[0].role == "user" {
+                tokenizer.format_chat_prompt(&[(
+                    "user".to_string(),
+                    item.req.messages[0].content.clone(),
+                )])
+            } else {
+                let msgs: Vec<(String, String)> = item
+                    .req
+                    .messages
+                    .iter()
+                    .map(|m| (m.role.clone(), m.content.clone()))
+                    .collect();
+                tokenizer.format_chat_prompt(&msgs)
+            };
+
+            let token_ids = tokenizer.encode(&prompt).unwrap_or_default();
             let (cached_len, page_indices) = cache.match_prefix(&token_ids);
             let table_idx = page_indices.first().copied().unwrap_or(0);
             let max_tokens = item.req.sampling_params.max_tokens;
@@ -137,9 +159,16 @@ async fn run_engine_loop(mut rx: mpsc::Receiver<ServerRequest>) -> anyhow::Resul
             let mut remaining_reqs = Vec::new();
             for req_item in active_reqs {
                 if req_item.is_finished || !req_item.can_decode() {
-                    let decoded_text = tokenizer
+                    let mut decoded_text = tokenizer
                         .decode(&req_item.generated_tokens)
                         .unwrap_or_default();
+
+                    // Strip any trailing assistant tokens / tags if present
+                    if let Some(stripped) = decoded_text.strip_suffix("<|im_end|>") {
+                        decoded_text = stripped.to_string();
+                    } else if let Some(stripped) = decoded_text.strip_suffix("<|endoftext|>") {
+                        decoded_text = stripped.to_string();
+                    }
 
                     if let Some(pos) = pending_handlers
                         .iter()
@@ -155,11 +184,7 @@ async fn run_engine_loop(mut rx: mpsc::Receiver<ServerRequest>) -> anyhow::Resul
                                 index: 0,
                                 message: ChatMessage {
                                     role: "assistant".to_string(),
-                                    content: if decoded_text.is_empty() {
-                                        "Hello from Mini-SGLang pure Rust engine!".to_string()
-                                    } else {
-                                        decoded_text
-                                    },
+                                    content: decoded_text,
                                 },
                                 finish_reason: Some("stop".to_string()),
                             }],

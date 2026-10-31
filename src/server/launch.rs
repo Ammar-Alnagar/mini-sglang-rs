@@ -1,15 +1,97 @@
+use crate::core::req::Req;
+use crate::core::sampling::SamplingParams;
+use crate::engine::config::EngineConfig;
+use crate::llm::engine::LLMEngine;
 use crate::server::api_server;
 use crate::server::args::Args;
+use crate::tokenizer::worker::TokenizerWorker;
 use anyhow::Result;
+use std::io::{self, BufRead, Write};
 
 pub async fn run(args: Args) -> Result<()> {
     if args.shell {
         println!("Interactive Shell Mode (Mini-SGLang Pure Rust)");
         println!("Model: {}", args.model);
         println!("Type '/reset' to clear chat history, or press Ctrl+C to exit.\n");
-        println!("User: ");
+
+        println!("Loading model weights and tokenizer...");
+        let tokenizer = TokenizerWorker::new(&args.model);
+        let mut engine = LLMEngine::new(EngineConfig::default())?;
+        if let Err(e) = engine.load_model(&args.model) {
+            eprintln!("Warning: Failed to load model weights ({}). Running in fallback mode.", e);
+        } else {
+            println!("Model loaded successfully.\n");
+        }
+
+        let mut history: Vec<(String, String)> = Vec::new();
+        let stdin = io::stdin();
+        let mut stdout = io::stdout();
+
+        loop {
+            print!("User: ");
+            stdout.flush()?;
+
+            let mut line = String::new();
+            if stdin.lock().read_line(&mut line)? == 0 {
+                // EOF reached
+                break;
+            }
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            if trimmed == "/reset" {
+                history.clear();
+                println!("Chat history cleared.\n");
+                continue;
+            }
+
+            history.push(("user".to_string(), trimmed.to_string()));
+            let prompt = tokenizer.format_chat_prompt(&history);
+            let token_ids = tokenizer.encode(&prompt)?;
+
+            let params = SamplingParams {
+                temperature: 0.7,
+                top_p: 0.9,
+                top_k: 50,
+                ignore_eos: false,
+                max_tokens: 512,
+            };
+
+            let mut req = Req::new(1, token_ids, 0, 0, params.max_tokens, params);
+
+            print!("Assistant: ");
+            stdout.flush()?;
+
+            let mut generated = Vec::new();
+            while req.can_decode() {
+                let mut batch_reqs = vec![req];
+                let tokens = engine.step(&mut batch_reqs).await?;
+                req = batch_reqs.pop().unwrap();
+
+                if let Some(&tok) = tokens.first() {
+                    generated.push(tok);
+                    if let Ok(piece) = tokenizer.decode(&[tok]) {
+                        print!("{}", piece);
+                        stdout.flush()?;
+                    }
+                }
+            }
+
+            println!("\n");
+            let mut response_text = tokenizer.decode(&generated).unwrap_or_default();
+            if let Some(stripped) = response_text.strip_suffix("<|im_end|>") {
+                response_text = stripped.to_string();
+            } else if let Some(stripped) = response_text.strip_suffix("<|endoftext|>") {
+                response_text = stripped.to_string();
+            }
+            history.push(("assistant".to_string(), response_text));
+        }
+
         return Ok(());
     }
 
-    api_server::start_server(&args.host, args.port).await
+    api_server::start_server(&args.host, args.port, &args.model).await
 }
