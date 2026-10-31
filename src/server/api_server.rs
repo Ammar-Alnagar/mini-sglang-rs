@@ -36,7 +36,7 @@ pub async fn start_server(host: &str, port: u16, model_name_or_path: &str, cfg: 
 
     // Spawn background engine worker loop for batching and execution
     tokio::spawn(async move {
-        if let Err(e) = run_engine_loop(rx, model_str, cfg).await {
+        if let Err(e) = run_engine_loop(rx, &model_str, cfg).await {
             tracing::error!("Engine loop error: {:?}", e);
         }
     });
