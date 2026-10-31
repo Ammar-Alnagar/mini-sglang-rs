@@ -1,0 +1,4 @@
+[env]
+# cudarc otherwise adds `-L/usr/lib` ahead of `/usr/lib64`. On RHEL-style
+# multilib that directory is 32-bit and breaks the x86_64 link.
+CUDA_HOME = "/usr/local/cuda"
