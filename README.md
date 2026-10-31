@@ -168,21 +168,26 @@ flowchart LR
 
 ### Build Instructions
 
+The engine executes on CPU by default. You can enable CUDA acceleration with Cargo feature flags on supported NVIDIA hardware.
+
 ```bash
-# Build release binary with default GPU features
+# Build release binary (CPU mode by default)
 cargo build --release
 
-# Build without GPU features for CPU fallback
-cargo build --no-default-features
+# Build release binary with CUDA acceleration
+cargo build --release --features cuda
 
-# Run OpenAI API Server
+# Run OpenAI API Server on CPU
 cargo run --release -- --model "Qwen/Qwen3-0.6B" --port 8000
+
+# Run OpenAI API Server with CUDA
+cargo run --release --features cuda -- --model "Qwen/Qwen3-0.6B" --port 8000
 
 # Run in Interactive Shell Mode
 cargo run --release -- --model "Qwen/Qwen3-0.6B" --shell
 
 # Run with Tensor Parallelism
-cargo run --release -- --model "Qwen/Qwen3-0.6B" --tp 2
+cargo run --release --features cuda -- --model "Qwen/Qwen3-0.6B" --tp 2
 ```
 
 ### Docker Deployment
